@@ -1,0 +1,25 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.example</groupId>
+        <artifactId>FlashMall</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>common</artifactId>
+    <dependencies>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.0.31</version>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+    <!--
+        依赖已在父 POM（项目根 `pom.xml`）中集中声明/管理。
+        为避免重复，在模块 POM 中保留模块特有的依赖即可。
+        如果需要在此模块添加特定依赖，请在下面的 <dependencies> 中添加。
+    -->
+</project>
