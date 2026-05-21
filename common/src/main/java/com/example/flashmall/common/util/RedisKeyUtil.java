@@ -1,0 +1,31 @@
+package com.example.flashmall.common.util;
+
+// 统一生成 key，避免硬编码字符串，方便维护和管理
+public class RedisKeyUtil {
+    private static final String PRODUCT_CACHE_KEY = "product:";
+    private static final String SHOP_CACHE_KEY = "shop:";
+    private static final String SECKILL_STOCK_KEY = "seckill:stock:";
+    private static final String SECKILL_EVENT_KEY = "seckill:event:";
+    private static final String USER_CACHE_KEY = "user:";
+    private static final String ORDER_CACHE_KEY = "order:";
+
+    // 获取key
+    public static String getProductKey(Long productId) {
+        return PRODUCT_CACHE_KEY + productId;
+    }
+    public static String getShopKey(Long shopId) {
+        return SHOP_CACHE_KEY + shopId;
+    }
+    public static String getSeckillStockKey(Long seckillEventId) {
+        return SECKILL_STOCK_KEY + seckillEventId;
+    }
+    public static String getSeckillEventKey(Long seckillEventId) {
+        return SECKILL_EVENT_KEY + seckillEventId;
+    }
+    public static String getUserKey(Long userId) {
+        return USER_CACHE_KEY + userId;
+    }
+    public static String getOrderKey(Long orderId) {
+        return ORDER_CACHE_KEY + orderId;
+    }
+}

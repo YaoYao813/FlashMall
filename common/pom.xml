@@ -16,6 +16,24 @@
             <version>8.0.31</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Redis dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <version>3.20.0</version>
+        </dependency>
+
+        <!-- Caffeine Cache dependency -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
+        </dependency>
     </dependencies>
     <!--
         依赖已在父 POM（项目根 `pom.xml`）中集中声明/管理。
