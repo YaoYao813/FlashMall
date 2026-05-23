@@ -3,8 +3,12 @@ package com.example.flashmall.shop.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.example.flashmall.common.entity.Product;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
 
 @Mapper
 public interface ProductMapper extends BaseMapper<Product> {
-    // 使用 MyBatis-Plus 内置方法，无需写 SQL
+    @Select("SELECT id FROM product")
+    List<Long> selectAllIds();
 }

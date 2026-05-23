@@ -40,12 +40,15 @@ public class CacheLockUtil {
         return (T) obj;
     }
 
+    // 使用总超时时间替代固定重试次数，在超时前不断尝试读取缓存和获取锁。
     public <T> T executeWithLock(String cacheKey, String lockKey, Supplier<T> fallback, Supplier<Long> ttlSupplier) {
-        // 1. 第一次快速检查
+        // 1. 第一次快速检查缓存
         T cached = getCache(cacheKey);
         if (cached != null) return cached;
+
         String lockValue = UUID.randomUUID().toString();
         long deadline = System.currentTimeMillis() + WAIT_TIME;
+
         while (System.currentTimeMillis() < deadline) {
             // 2. 每次循环优先检查缓存（避免睡眠期间错过）
             cached = getCache(cacheKey);
@@ -67,13 +70,15 @@ public class CacheLockUtil {
                 if (result != null) {
                     redisTemplate.opsForValue().set(cacheKey, result, ttlSupplier.get(), TimeUnit.SECONDS);
                 } else {
+                    // 空值缓存
                     redisTemplate.opsForValue().set(cacheKey, NullCache.INSTANCE, 60L, TimeUnit.SECONDS);
                 }
                 return result;
             }
+
             // 未获取锁，短暂休眠后继续自旋
             try {
-                TimeUnit.MILLISECONDS.sleep(SPIN_INTERVAL);
+                TimeUnit.MILLISECONDS.sleep(SPIN_INTERVAL);// 睡眠
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 // 中断时再次检查缓存
