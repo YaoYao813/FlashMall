@@ -96,6 +96,11 @@
             <artifactId>mybatis-plus-boot-starter</artifactId>
             <version>3.5.3.1</version>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.13.4</version> <!-- 和jackson-databind版本保持一致，你的是2.13.4.2 -->
+        </dependency>
          <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

@@ -8,8 +8,10 @@ public class RedisKeyUtil {
     private static final String SECKILL_EVENT_KEY = "seckill:event:";
     private static final String USER_CACHE_KEY = "user:";
     private static final String ORDER_CACHE_KEY = "order:";
+    public static final String SHOP_KEY_PREFIX = "shop:";
+    public static final long SHOP_TTL_BASE = 3600L; // 1小时基础TTL
+    public static final long PRODUCT_TTL_BASE = 1800L; // 30分钟基础TTL
 
-    // 获取key
     public static String getProductKey(Long productId) {
         return PRODUCT_CACHE_KEY + productId;
     }

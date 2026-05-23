@@ -1,20 +1,24 @@
 package com.example.flashmall.shop.service.impl;
 
-import java.util.concurrent.TimeUnit;
-
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.flashmall.common.entity.Product;
 import com.example.flashmall.common.util.RedisKeyUtil;
 import com.example.flashmall.shop.mapper.ProductMapper;
 import com.example.flashmall.shop.service.ProductService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import com.example.flashmall.common.util.CacheLockUtil;
 
 @Service
+@RequiredArgsConstructor
 public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> implements ProductService {
     @Autowired
     private RedisTemplate redisTemplate;
+
+    @Autowired
+    private CacheLockUtil cacheLockUtil;
 
     @Autowired
     private ProductMapper productMapper;
@@ -23,23 +27,14 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     @Override
     public Product getProductById(Long productId) {
-        String key = RedisKeyUtil.getProductKey(productId);
-        // 1. 查询缓存
-        Product product = (Product) redisTemplate.opsForValue().get(key);
-        if (product != null) {
-            return product;
-        }
-        // 2. 缓存未命中，查数据库
-        product = productMapper.selectById(productId);
-        if (product != null) {
-            // 3. 写入缓存（加随机过期时间防雪崩）
-            long ttl = CACHE_TTL + (long)(Math.random() * 300); // 额外随机0~5分钟
-            redisTemplate.opsForValue().set(key, product, ttl, TimeUnit.SECONDS); //写入缓存
-        } else { // 找不到product
-            // 4. 防穿透：缓存空值（5分钟）
-            redisTemplate.opsForValue().set(key, new Product(), 300, TimeUnit.SECONDS);
-        }
-        return product;
+        String cacheKey = RedisKeyUtil.getProductKey(productId);
+        String lockKey = "lock:product:" + productId;
+        return cacheLockUtil.executeWithLock(
+                cacheKey,
+                lockKey,
+                () -> baseMapper.selectById(productId),  // DB 查询回调
+                () -> RedisKeyUtil.PRODUCT_TTL_BASE + (long) (Math.random() * 600) // 随机 TTL
+        );
     }
 
     @Override
