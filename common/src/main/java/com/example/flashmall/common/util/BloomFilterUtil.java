@@ -1,6 +1,7 @@
 package com.example.flashmall.common.util;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
@@ -20,7 +21,7 @@ import java.util.List;
 public class BloomFilterUtil {
 
     @Autowired
-    private RedissonClient redissonClient;
+    private RedissonClient redissonClient; //redission客户端
 
     // 过滤器名称（全局唯一）
     private static final String SHOP_BLOOM_FILTER = "bloom:shop:id";
@@ -33,6 +34,9 @@ public class BloomFilterUtil {
 
     private RBloomFilter<Long> shopBloomFilter;
     private RBloomFilter<Long> productBloomFilter;
+
+    @Value("${bloom.filter.enabled:true}")
+    private boolean bloomFilterEnabled;
 
     @PostConstruct
     public void init() {
@@ -65,6 +69,10 @@ public class BloomFilterUtil {
     }
 
     public boolean mightContainShopId(Long shopId) {
+        if (!bloomFilterEnabled) {
+            // 关闭时直接返回true，放行所有请求
+            return true;
+        }
         return shopBloomFilter.contains(shopId);
     }
 
@@ -82,6 +90,9 @@ public class BloomFilterUtil {
     }
 
     public boolean mightContainProductId(Long productId) {
+        if (!bloomFilterEnabled) {
+            return true;
+        }
         return productBloomFilter.contains(productId);
     }
 

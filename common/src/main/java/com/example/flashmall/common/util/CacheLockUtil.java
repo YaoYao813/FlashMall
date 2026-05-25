@@ -29,7 +29,7 @@ public class CacheLockUtil {
     private static final long SPIN_INTERVAL = 10; // 自旋间隔（ms）
     private static final String RELEASE_LOCK_SCRIPT =
             "if redis.call('get', KEYS[1]) == ARGV[1] then " +
-                    "return redis.call('del', KEYS[1]) else return 0 end";
+                    "return redis.call('del', KEYS[1]) else return 0 end"; // 释放锁的Lua脚本
 
     // 统一缓存读取（你要求的getCache方法）
     private <T> T getCache(String cacheKey) {
@@ -41,6 +41,7 @@ public class CacheLockUtil {
     }
 
     // 使用总超时时间替代固定重试次数，在超时前不断尝试读取缓存和获取锁。
+    @SuppressWarnings("unchecked")
     public <T> T executeWithLock(String cacheKey, String lockKey, Supplier<T> fallback, Supplier<Long> ttlSupplier) {
         // 1. 第一次快速检查缓存
         T cached = getCache(cacheKey);
@@ -53,19 +54,24 @@ public class CacheLockUtil {
             // 2. 每次循环优先检查缓存（避免睡眠期间错过）
             cached = getCache(cacheKey);
             if (cached != null) return cached;
+
             // 3. 尝试获取锁
             Boolean locked = redisTemplate.opsForValue()
                     .setIfAbsent(lockKey, lockValue, LOCK_TTL, TimeUnit.SECONDS);
+
+            // 获取锁成功
             if (Boolean.TRUE.equals(locked)) {
-                // 获取锁成功，双检缓存
+                // 双检缓存
                 cached = getCache(cacheKey);
                 if (cached != null) {
                     // 锁持有人释放锁后返回
                     releaseLock(lockKey, lockValue);
                     return cached;
                 }
+
                 // 唯一查库
                 T result = fallback.get();
+
                 // 写缓存
                 if (result != null) {
                     redisTemplate.opsForValue().set(cacheKey, result, ttlSupplier.get(), TimeUnit.SECONDS);
@@ -78,7 +84,7 @@ public class CacheLockUtil {
 
             // 未获取锁，短暂休眠后继续自旋
             try {
-                TimeUnit.MILLISECONDS.sleep(SPIN_INTERVAL);// 睡眠
+                TimeUnit.MILLISECONDS.sleep(SPIN_INTERVAL);// 睡眠后 继续尝试获取锁
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 // 中断时再次检查缓存
@@ -89,9 +95,11 @@ public class CacheLockUtil {
                 return fallback.get();
             }
         }
+
         // 4. 超时后仍未获得锁或缓存，降级策略：再次尝试读缓存，否则熔断（例如返回默认值或报错）
         cached = getCache(cacheKey);
         if (cached != null) return cached;
+
         // 若超时且无缓存，说明系统负载过高，可返回 null 或抛出异常，但不要查库
         log.warn("缓存互斥超时，key={}，降级返回null", cacheKey);
         return null; // 或者 throw new ServiceException("服务繁忙");

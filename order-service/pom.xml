@@ -9,10 +9,40 @@
     </parent>
 
     <artifactId>order-service</artifactId>
+    <name>order-service</name>
+    <description>订单模块</description>
+
     <dependencies>
+        <!-- 公共模块（已包含实体、工具类、Redis配置、全局异常等） -->
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>common</artifactId>
+        </dependency>
+
+<!--        &lt;!&ndash; Spring Boot Web（已包含spring-boot-starter核心依赖，无需重复引入） &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.boot</groupId>-->
+<!--            <artifactId>spring-boot-starter-web</artifactId>-->
+<!--        </dependency>-->
+
+        <!-- MyBatis-Plus ORM框架（版本统一继承父工程） -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+        </dependency>
+
+        <!-- MySQL 8.0+ 官方驱动（使用新版artifactId，runtime scope） -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- 单元测试依赖（仅测试环境有效） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

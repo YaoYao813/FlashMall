@@ -3,7 +3,6 @@ package com.example.flashmall.shop.controller;
 import com.example.flashmall.common.entity.Shop;
 import com.example.flashmall.shop.service.ShopService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import com.example.flashmall.common.util.Result;
 import com.example.flashmall.common.util.BloomFilterUtil;
@@ -41,6 +40,6 @@ public class ShopController {
     @PutMapping
     public Result updateShop(@RequestBody Shop shop) {
         boolean ok = shopService.updateShop(shop);
-        return ok ? Result.success() : Result.fail("更新失败");
+        return ok ? Result.success("秒杀成功", orderId) : Result.fail("更新失败");
     }
 }

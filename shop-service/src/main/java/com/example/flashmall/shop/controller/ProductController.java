@@ -5,11 +5,9 @@ import com.example.flashmall.common.entity.Shop;
 import com.example.flashmall.shop.service.ProductService;
 import com.example.flashmall.common.util.Result;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import com.example.flashmall.common.util.BloomFilterUtil;
 import com.example.flashmall.common.util.CacheLockUtil;
-
 import java.util.Random;
 
 @RestController
