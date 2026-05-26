@@ -1,15 +1,11 @@
 package com.example.seckillservice.controller;
 
-import com.example.flashmall.common.util.Result;
+import com.example.seckillservice.config.SeckillRateLimiter;
 import com.example.seckillservice.service.SeckillService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
+import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,17 +14,25 @@ import java.util.Map;
 public class SeckillController {
     @Autowired
     private SeckillService seckillService;
-
+    @Autowired
+    private SeckillRateLimiter rateLimiter;
     @PostMapping
     public ResponseEntity<Map<String, Object>> seckill(@RequestParam Long userId, @RequestParam Long productId) {
-        Map<String, Object> result = new HashMap<>();
+        // ======== 限流检查 ========
+        if (!rateLimiter.tryAcquire()) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("code", 429);
+            result.put("message", "系统繁忙，请稍后重试");
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(result);
+        }
         try {
-            Long orderId = seckillService.seckill(userId, productId);
+            Long resultCode = seckillService.seckill(userId, productId);
+            Map<String, Object> result = new HashMap<>();
             result.put("code", 200);
-            result.put("message", "秒杀成功");
-            result.put("data", orderId);
+            result.put("message", "秒杀成功，订单处理中...");
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
+            Map<String, Object> result = new HashMap<>();
             result.put("code", 500);
             result.put("message", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
