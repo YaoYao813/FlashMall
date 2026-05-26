@@ -6,9 +6,11 @@ import com.example.flashmall.common.entity.Order;
 import com.example.flashmall.common.entity.ProductStock;
 import com.example.flashmall.common.mapper.OrderMapper;
 import com.example.flashmall.common.mapper.ProductStockMapper;
+import com.example.seckillservice.script.SeckillRedisScript;
 import com.example.seckillservice.service.SeckillService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,44 +29,70 @@ public class SeckillServiceImpl implements SeckillService {
     @Autowired
     private OrderMapper orderMapper;
 
+    @Autowired
+    private SeckillRedisScript seckillRedisScript;
+
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
+
+    // 秒杀业务
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long seckill(Long userId, Long productId) {
-        ProductStock stock = productStockMapper.selectOne(
-                new LambdaQueryWrapper<ProductStock>()
-                        .eq(ProductStock::getProductId, productId)
-        );
-        if (stock == null || stock.getStock() <= 0) {
+
+        // ========== 第一阶段：Redis + Lua 预校验（内存操作，微秒级） ==========
+        Long result = seckillRedisScript.executeSeckill(productId, userId);
+        if (result == 1) {
             throw new RuntimeException("库存不足");
         }
-
-        // 2. 乐观锁更新：只有版本号匹配时才扣减成功
-        LambdaUpdateWrapper<ProductStock> update = new LambdaUpdateWrapper<>();
-        update.eq(ProductStock::getProductId, productId)
-                .eq(ProductStock::getVersion, stock.getVersion())
-                .setSql("stock = stock - 1, version = version + 1");  // 关键修复：同时更新版本号
-        int affected = productStockMapper.update(null, update);
-        if (affected == 0) {
-            log.warn("乐观锁冲突，秒杀失败 userId={}, productId={}, version={}",
-                    userId, productId, stock.getVersion());
-            throw new RuntimeException("秒杀失败，请重试");
+        if (result == 2) {
+            throw new RuntimeException("您已抢购过该商品，请勿重复下单");
         }
 
-        // 3. 创建订单（简化版，不写商品名称查询）
-        Order order = new Order();
-        order.setOrderNo(generateOrderNo());
-        order.setUserId(userId);
-        order.setProductId(productId);
-        order.setProductName("商品" + productId); // 实际应查询商品表
-        order.setPrice(new BigDecimal("99.99"));   // 实际应查询
-        order.setQuantity(1);
-        order.setTotalAmount(order.getPrice());
-        order.setStatus(0);
-        orderMapper.insert(order);// 插入订单
-        log.info("秒杀成功，订单ID={}", order.getId());
-        return order.getId();
+        // ========== 第二阶段：数据库落单（只有通过校验的请求才到这里） ==========
+        try {
+            // 1. 查询 MySQL 库存（兜底校验，防止 Redis 与 MySQL 数据不一致）
+            LambdaQueryWrapper<ProductStock> query = new LambdaQueryWrapper<ProductStock>()
+                    .eq(ProductStock::getProductId, productId);
+            ProductStock stock = productStockMapper.selectOne(query);
+            if (stock == null || stock.getStock() <= 0) {
+                // Redis 有库存但 MySQL 无库存 → 数据不一致，回滚 Redis
+                seckillRedisScript.rollbackStock(productId, userId);
+                throw new RuntimeException("库存不足");
+            }
+
+            // 2. 乐观锁扣 MySQL 库存
+            LambdaUpdateWrapper<ProductStock> update = new LambdaUpdateWrapper<>();
+            update.eq(ProductStock::getProductId, productId)
+                    .eq(ProductStock::getVersion, stock.getVersion())
+                    .setSql("stock = stock - 1, version = version + 1");
+            int affected = productStockMapper.update(null, update);
+            if (affected == 0) {
+                // 乐观锁冲突，回滚 Redis
+                seckillRedisScript.rollbackStock(productId, userId);
+                throw new RuntimeException("秒杀失败，请重试");
+            }
+
+            // 3. 创建订单
+            Order order = new Order();
+            order.setOrderNo(generateOrderNo());
+            order.setUserId(userId);
+            order.setProductId(productId);
+            order.setProductName("秒杀商品-" + productId);
+            order.setPrice(new BigDecimal("0.01"));
+            order.setQuantity(1);
+            order.setTotalAmount(order.getPrice());
+            order.setStatus(0);
+            orderMapper.insert(order);
+            return order.getId();
+        } catch (RuntimeException e) {
+            // 任何数据库异常都回滚 Redis 库存
+            seckillRedisScript.rollbackStock(productId, userId);
+            throw e;
+        }
     }
 
+    // 创建订单号
     private String generateOrderNo() {
         return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS"))
                 + (UUID.randomUUID().toString().hashCode() & Integer.MAX_VALUE);

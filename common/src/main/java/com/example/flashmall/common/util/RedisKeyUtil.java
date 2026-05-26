@@ -11,6 +11,8 @@ public class RedisKeyUtil {
     public static final String SHOP_KEY_PREFIX = "shop:";
     public static final long SHOP_TTL_BASE = 3600L; // 1小时基础TTL
     public static final long PRODUCT_TTL_BASE = 1800L; // 30分钟基础TTL
+    public static final String SECKILL_STOCK_PREFIX = "seckill:stock:";
+    public static final String SECKILL_USER_PREFIX = "seckill:user:";
 
     public static String getProductKey(Long productId) {
         return PRODUCT_CACHE_KEY + productId;
@@ -29,5 +31,11 @@ public class RedisKeyUtil {
     }
     public static String getOrderKey(Long orderId) {
         return ORDER_CACHE_KEY + orderId;
+    }
+    public static String buildSeckillStockKey(Long productId) {
+        return SECKILL_STOCK_PREFIX + productId;
+    }
+    public static String buildSeckillUserKey(Long productId, Long userId) {
+        return SECKILL_USER_PREFIX + productId + ":" + userId;
     }
 }
