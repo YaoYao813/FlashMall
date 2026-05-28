@@ -53,11 +53,11 @@ public class SeckillServiceImpl implements SeckillService {
         String orderNo = generateOrderNo();
         SeckillMessage message = new SeckillMessage(userId, productId, orderNo);
         try {
-            // 发送消息到 RabbitMQ
+            // 组装消息发到 RabbitMQ 的交换机
             rabbitTemplate.convertAndSend(
                     RabbitMQConfig.SECKILL_EXCHANGE,
                     RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
-                    message
+                    message // 消息
             );
             log.info("秒杀消息已发送：userId={}, productId={}, orderNo={}", userId, productId, orderNo);
         } catch (Exception e) {

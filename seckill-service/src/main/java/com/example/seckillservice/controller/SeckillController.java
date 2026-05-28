@@ -12,14 +12,17 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/seckill")
 public class SeckillController {
+
     @Autowired
     private SeckillService seckillService;
     @Autowired
     private SeckillRateLimiter rateLimiter;
+
     @PostMapping
     public ResponseEntity<Map<String, Object>> seckill(@RequestParam Long userId, @RequestParam Long productId) {
         // ======== 限流检查 ========
         if (!rateLimiter.tryAcquire()) {
+            // 不同意
             Map<String, Object> result = new HashMap<>();
             result.put("code", 429);
             result.put("message", "系统繁忙，请稍后重试");
@@ -36,6 +39,9 @@ public class SeckillController {
             result.put("code", 500);
             result.put("message", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
+        } finally {
+            // 无论成功还是失败，都释放许可
+            rateLimiter.release();
         }
     }
 }
