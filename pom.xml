@@ -31,6 +31,10 @@
         <jackson-jsr310.version>2.13.4</jackson-jsr310.version>
         <mysql.version>8.0.31</mysql.version>
         <lombok.version>1.18.38</lombok.version>
+
+        <!-- Spring Cloud & Alibaba 版本 -->
+        <spring-cloud.version>2021.0.9</spring-cloud.version>
+        <spring-cloud-alibaba.version>2021.0.6.0</spring-cloud-alibaba.version>
     </properties>
 
     <modules>
@@ -39,15 +43,11 @@
         <module>shop-service</module>
         <module>order-service</module>
         <module>seckill-service</module>
+        <module>gateway</module>
     </modules>
 
     <!-- 所有子模块共享的依赖（自动继承，无需子模块再声明） -->
     <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -58,6 +58,24 @@
     <!-- 统一版本管理（子模块使用时无需写 version） -->
     <dependencyManagement>
         <dependencies>
+            <!-- Spring Cloud BOM -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Spring Cloud Alibaba BOM -->
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- 项目内部模块 -->
             <dependency>
                 <groupId>com.example</groupId>

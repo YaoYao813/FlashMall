@@ -94,6 +94,13 @@ public class OrderServiceImpl implements OrderService {
         return new PageResult<>(result.getRecords(), result.getTotal(), result.getPages());
     }
 
+    @Override
+    public Order getOrderByOrderNo(String orderNo) {
+        LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<Order>()
+                .eq(Order::getOrderNo, orderNo);
+        return orderMapper.selectOne(query);
+    }
+
     private String generateOrderNo() {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String uuid = UUID.randomUUID().toString().replace("-", "").substring(0, 8);

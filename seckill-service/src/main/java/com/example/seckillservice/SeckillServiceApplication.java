@@ -7,7 +7,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.mybatis.spring.annotation.MapperScan;
 
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+
 @SpringBootApplication(scanBasePackages = {"com.example.flashmall", "com.example.seckillservice"})
+@EnableDiscoveryClient
 @MapperScan("com.example.flashmall.common.mapper")
 public class SeckillServiceApplication implements CommandLineRunner {
 

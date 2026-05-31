@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.flashmall.user.entity.User;
 import com.example.flashmall.user.mapper.UserMapper;
 import com.example.flashmall.user.service.UserService;
-import com.example.flashmall.user.util.JwtUtil;
+import com.example.flashmall.common.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;

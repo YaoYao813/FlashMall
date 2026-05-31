@@ -2,6 +2,7 @@ package com.example.flashmall.shop.controller;
 
 import com.example.flashmall.common.entity.Product;
 import com.example.flashmall.common.entity.Shop;
+import com.example.flashmall.common.util.PageResult;
 import com.example.flashmall.shop.service.ProductService;
 import com.example.flashmall.common.util.Result;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,16 @@ public class ProductController {
     private final ProductService productService;
     private final BloomFilterUtil bloomFilterUtil;
     private final CacheLockUtil cacheLockUtil;
+
+    @GetMapping
+    public Result getProductList(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "create_time_desc") String sort) {
+        PageResult<Product> pageResult = productService.listProducts(page, size, keyword, sort);
+        return Result.success(pageResult);
+    }
 
     @GetMapping("/{id}")
     public Result getProduct(@PathVariable Long id) {// 第一层：布隆过滤器拦截

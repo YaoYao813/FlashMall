@@ -19,7 +19,8 @@ public class SeckillController {
     private SeckillRateLimiter rateLimiter;
 
     @PostMapping
-    public ResponseEntity<Map<String, Object>> seckill(@RequestParam Long userId, @RequestParam Long productId) {
+    public ResponseEntity<Map<String, Object>> seckill(@RequestHeader("X-User-Id") Long userId,
+                                                        @RequestParam Long productId) {
         // ======== 限流检查 ========
         if (!rateLimiter.tryAcquire()) {
             // 不同意
