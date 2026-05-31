@@ -1,5 +1,6 @@
 package com.example.flashmall.order.enums;
 
+// 订单状态 (枚举)
 public enum OrderStatus {
     PENDING_PAY(0, "待支付"),
     PAID(1, "已支付"),
@@ -24,14 +25,14 @@ public enum OrderStatus {
      */
     public boolean canTransitionTo(OrderStatus target) {
         switch (this) {
-            case PENDING_PAY:
-                return target == PAID || target == CANCELLED || target == TIMEOUT;
-            case PAID:
-                return target == SHIPPED;
-            case SHIPPED:
-                return target == COMPLETED;
+            case PENDING_PAY:// 待支付
+                return target == PAID || target == CANCELLED || target == TIMEOUT; // 待支付 --> 已支付/已取消/已超时
+            case PAID:// 已支付
+                return target == SHIPPED; // 已支付 --> 已发货
+            case SHIPPED:// 已发货
+                return target == COMPLETED; // 已发货 --> 已完成
             default:
-                return false;  // 已完成/已取消/已超时不能变更
+                return false;  // 已完成/已取消/已超时不能再变更
         }
     }
 }

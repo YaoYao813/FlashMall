@@ -33,22 +33,17 @@ public class Order implements Serializable {
 
     private BigDecimal totalAmount;
 
-    private Integer status;  // 0-待支付
+    private Integer status;  // 订单状态
+
+    private Long addressId;
+
+    private LocalDateTime payTime;
+
+    private String tradeNo;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
-
-    public void setOrder(String orderNo,Long userId,Long productId,String productName,BigDecimal price,Integer quantity,BigDecimal totalAmount,Integer status){
-        this.orderNo = orderNo;
-        this.userId = userId;
-        this.productId = productId;
-        this.productName = productName;
-        this.price = price;
-        this.quantity = quantity;
-        this.totalAmount = totalAmount;
-        this.status = status;
-    }
 }

@@ -27,11 +27,11 @@ public class CacheLockUtil {
     private static final int MAX_RETRY = 200;
     private static final long WAIT_TIME = 200;
     private static final long SPIN_INTERVAL = 10; // 自旋间隔（ms）
-    private static final String RELEASE_LOCK_SCRIPT =
+    private static final String RELEASE_LOCK_SCRIPT = // 释放锁Lua脚本
             "if redis.call('get', KEYS[1]) == ARGV[1] then " +
                     "return redis.call('del', KEYS[1]) else return 0 end"; // 释放锁的Lua脚本
 
-    // 统一缓存读取（你要求的getCache方法）
+    // 统一缓存读取
     private <T> T getCache(String cacheKey) {
         Object obj = redisTemplate.opsForValue().get(cacheKey);
         if (obj instanceof NullCache) {
@@ -72,7 +72,7 @@ public class CacheLockUtil {
                 // 唯一查库
                 T result = fallback.get();
 
-                // 写缓存
+                // 库中存在被查询数据 写缓存
                 if (result != null) {
                     redisTemplate.opsForValue().set(cacheKey, result, ttlSupplier.get(), TimeUnit.SECONDS);
                 } else {

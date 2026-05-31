@@ -1,6 +1,7 @@
 package com.example.flashmall.order.service;
 
 import com.example.flashmall.common.entity.Order;
+import com.example.flashmall.common.util.PageResult;
 
 public interface OrderService {
     Long createOrder(Long userId, Long productId, Integer quantity, Long addressId);

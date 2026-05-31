@@ -1,12 +1,18 @@
 package com.example.flashmall.user.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.flashmall.user.entity.User;
+import com.example.flashmall.user.mapper.UserMapper;
 import com.example.flashmall.user.service.UserService;
 import com.example.flashmall.user.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
 
 import java.util.concurrent.TimeUnit;
 
+@Service
 public class UserServiceImpl implements UserService {
 
     @Autowired

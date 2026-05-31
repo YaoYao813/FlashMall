@@ -4,12 +4,15 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.flashmall.user.entity.Address;
 import com.example.flashmall.user.mapper.AddressMapper;
 import com.example.flashmall.user.service.AddressService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
 import java.util.List;
 
+@Service
+@Slf4j
 public class AddressServiceImpl implements AddressService {
 
     @Autowired

@@ -17,9 +17,9 @@ public class Result<T> {
         return new Result<>(200, "操作成功", data);
     }
 
-    // 成功响应（无数据）
-    public static <T> Result<T> success(String 秒杀成功, Long orderId) {
-        return new Result<>(200, "操作成功", null);
+    // 成功响应（自定义消息 + 数据）
+    public static <T> Result<T> success(T data, String message) {
+        return new Result<>(200, message, data);
     }
 
     // 失败响应（带错误信息）

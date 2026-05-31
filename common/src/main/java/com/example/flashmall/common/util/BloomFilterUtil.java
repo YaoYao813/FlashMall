@@ -6,22 +6,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 import java.util.List;
 
-/**
- * 分布式布隆过滤器工具类
- * 专门处理店铺和商品ID的存在性判断，防缓存穿透
- */
 @Component
 @Slf4j
 @RequiredArgsConstructor
+@ConditionalOnBean(RedissonClient.class)
 public class BloomFilterUtil {
 
     @Autowired
-    private RedissonClient redissonClient; //redission客户端
+    private RedissonClient redissonClient;
 
     // 过滤器名称（全局唯一）
     private static final String SHOP_BLOOM_FILTER = "bloom:shop:id";

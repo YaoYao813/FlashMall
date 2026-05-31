@@ -19,11 +19,11 @@
             <artifactId>common</artifactId>
         </dependency>
 
-<!--        &lt;!&ndash; Spring Boot Web（已包含spring-boot-starter核心依赖，无需重复引入） &ndash;&gt;-->
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.boot</groupId>-->
-<!--            <artifactId>spring-boot-starter-web</artifactId>-->
-<!--        </dependency>-->
+        <!-- RabbitMQ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
 
         <!-- MyBatis-Plus ORM框架（版本统一继承父工程） -->
         <dependency>

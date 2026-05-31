@@ -16,20 +16,22 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitMQConfig {
 
-    // ========== 交换机 ==========
+    // ========== 秒杀交换机 ==========
     public static final String SECKILL_EXCHANGE = "seckill.direct.exchange";
 
-    // ========== 队列 ==========
+    // ========== 秒杀队列 ==========
     public static final String SECKILL_ORDER_QUEUE = "seckill.order.queue";
 
-    // ========== 路由键 ==========
+    // ========== 秒杀路由键 ==========
     public static final String SECKILL_ORDER_ROUTING_KEY = "seckill.order.create";
 
+    // 秒杀交换机
     @Bean
     public DirectExchange seckillExchange() {
         return new DirectExchange(SECKILL_EXCHANGE, true, false);
     }
 
+    // 秒杀队列
     @Bean
     public Queue seckillOrderQueue() {
         return new Queue(SECKILL_ORDER_QUEUE, true, false, false);

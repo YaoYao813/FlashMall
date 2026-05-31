@@ -1,5 +1,6 @@
 package com.example.flashmall.order.consumer;
 
+import com.rabbitmq.client.Channel;
 import com.example.flashmall.common.entity.Order;
 import com.example.flashmall.common.mapper.OrderMapper;
 import com.example.flashmall.order.enums.OrderStatus;
@@ -12,7 +13,6 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.channels.Channel;
 import java.util.HashMap;
 import java.util.Map;
 

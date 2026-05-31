@@ -1,11 +1,7 @@
 package com.example.flashmall.common;
 
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Configuration;
 
-@SpringBootApplication(scanBasePackages = "com.example.flashmall")
+@Configuration
 public class CommonApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(CommonApplication.class, args);
-    }
 }

@@ -29,16 +29,17 @@ public class PayController {
         // 1. 检查订单状态
         Order order = orderMapper.selectById(orderId);
         if (order == null || order.getStatus() != OrderStatus.PENDING_PAY.getCode()) {
+            // 订单不存在/不是“未支付”
             return Result.fail("订单状态不正确");
         }
         // 2. 模拟调用支付网关（这里直接成功）
         String tradeNo = "MOCK" + System.currentTimeMillis();
         // 3. 更新订单状态
-        order.setStatus(OrderStatus.PAID.getCode());
+        order.setStatus(OrderStatus.PAID.getCode());// 改为已支付
         order.setPayTime(LocalDateTime.now());
         order.setTradeNo(tradeNo);
         orderMapper.updateById(order);
-        return Result.success("支付成功");
+        return Result.success(null, "支付成功");
     }
 
     /**

@@ -117,8 +117,14 @@ public class SeckillConsumer {
         List<Order> orders = new ArrayList<>(count);
         for (SeckillMessage msg : batch) {
             Order order = new Order();
-            order.setOrder(msg.getOrderNo(), msg.getUserId(), msg.getProductId(),
-                    "秒杀商品-" + msg.getProductId(), new BigDecimal("0.01"), 1, new BigDecimal("0.01"), 0);
+            order.setOrderNo(msg.getOrderNo());
+            order.setUserId(msg.getUserId());
+            order.setProductId(msg.getProductId());
+            order.setProductName("秒杀商品-" + msg.getProductId());
+            order.setPrice(new BigDecimal("0.01"));
+            order.setQuantity(1);
+            order.setTotalAmount(new BigDecimal("0.01"));
+            order.setStatus(0);
             orders.add(order);
         }
         orderMapper.insertBatch(orders);

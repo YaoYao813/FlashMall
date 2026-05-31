@@ -12,7 +12,7 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.channels.Channel;
+import com.rabbitmq.client.Channel;
 import java.util.Map;
 
 // 回滚消费者

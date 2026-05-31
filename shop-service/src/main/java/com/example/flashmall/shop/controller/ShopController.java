@@ -40,6 +40,6 @@ public class ShopController {
     @PutMapping
     public Result updateShop(@RequestBody Shop shop) {
         boolean ok = shopService.updateShop(shop);
-        return ok ? Result.success("秒杀成功", orderId) : Result.fail("更新失败");
+        return ok ? Result.success(null, "更新成功") : Result.fail("更新失败");
     }
 }
