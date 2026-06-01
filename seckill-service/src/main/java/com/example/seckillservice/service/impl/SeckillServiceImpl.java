@@ -38,7 +38,7 @@ public class SeckillServiceImpl implements SeckillService {
     // 秒杀业务
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long seckill(Long userId, Long productId) {
+    public String seckill(Long userId, Long productId) {
 
         // ========== 第一阶段：Redis + Lua 预校验（内存操作，微秒级） ==========
         Long result = seckillRedisScript.executeSeckill(productId, userId);
@@ -66,8 +66,7 @@ public class SeckillServiceImpl implements SeckillService {
             seckillRedisScript.rollbackStock(productId, userId);
             throw new RuntimeException("系统繁忙，请稍后重试");
         }
-        // 返回 0 表示"排队中"（异步处理），Controller 层会解析
-        return 0L;
+        return orderNo;
     }
 
     // 创建订单号

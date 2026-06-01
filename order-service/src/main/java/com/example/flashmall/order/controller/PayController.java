@@ -22,20 +22,29 @@ public class PayController {
     private RabbitTemplate rabbitTemplate;
 
     /**
-     * 模拟支付：用户点击"去支付"
+     * 模拟支付（按 orderId）
      */
     @PostMapping("/mock")
-    public Result mockPay(@RequestParam Long orderId) {
-        // 1. 检查订单状态
-        Order order = orderMapper.selectById(orderId);
-        if (order == null || order.getStatus() != OrderStatus.PENDING_PAY.getCode()) {
-            // 订单不存在/不是“未支付”
+    public Result mockPay(@RequestParam(required = false) Long orderId,
+                          @RequestParam(required = false) String orderNo) {
+        Order order;
+        if (orderNo != null) {
+            LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<Order>()
+                    .eq(Order::getOrderNo, orderNo);
+            order = orderMapper.selectOne(query);
+        } else if (orderId != null) {
+            order = orderMapper.selectById(orderId);
+        } else {
+            return Result.fail("请提供 orderId 或 orderNo");
+        }
+        if (order == null) {
+            return Result.fail("订单不存在，请稍后重试（订单异步处理中）");
+        }
+        if (order.getStatus() != OrderStatus.PENDING_PAY.getCode()) {
             return Result.fail("订单状态不正确");
         }
-        // 2. 模拟调用支付网关（这里直接成功）
         String tradeNo = "MOCK" + System.currentTimeMillis();
-        // 3. 更新订单状态
-        order.setStatus(OrderStatus.PAID.getCode());// 改为已支付
+        order.setStatus(OrderStatus.PAID.getCode());
         order.setPayTime(LocalDateTime.now());
         order.setTradeNo(tradeNo);
         orderMapper.updateById(order);

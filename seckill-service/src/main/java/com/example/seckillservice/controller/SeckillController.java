@@ -30,10 +30,11 @@ public class SeckillController {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(result);
         }
         try {
-            Long resultCode = seckillService.seckill(userId, productId);
+            String orderNo = seckillService.seckill(userId, productId);
             Map<String, Object> result = new HashMap<>();
             result.put("code", 200);
             result.put("message", "秒杀成功，订单处理中...");
+            result.put("orderNo", orderNo);
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
             Map<String, Object> result = new HashMap<>();
