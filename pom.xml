@@ -35,6 +35,9 @@
         <!-- Spring Cloud & Alibaba 版本 -->
         <spring-cloud.version>2021.0.9</spring-cloud.version>
         <spring-cloud-alibaba.version>2021.0.6.0</spring-cloud-alibaba.version>
+
+        <!-- SpringDoc (Swagger) -->
+        <springdoc.version>1.7.0</springdoc.version>
     </properties>
 
     <modules>
@@ -111,11 +114,18 @@
                 <version>${caffeine.version}</version>
             </dependency>
 
-            <!-- Jackson JSR310 -->
+            <!-- Sentinel Gateway 适配器（网关专用） -->
             <dependency>
-                <groupId>com.fasterxml.jackson.datatype</groupId>
-                <artifactId>jackson-datatype-jsr310</artifactId>
-                <version>${jackson-jsr310.version}</version>
+                <groupId>com.alibaba.csp</groupId>
+                <artifactId>sentinel-spring-cloud-gateway-adapter</artifactId>
+                <version>1.8.6</version>
+            </dependency>
+
+            <!-- SpringDoc OpenAPI (Swagger) -->
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-ui</artifactId>
+                <version>${springdoc.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

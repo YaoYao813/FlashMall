@@ -54,6 +54,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- SpringDoc (Swagger) -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-ui</artifactId>
+        </dependency>
+
         <!-- Nacos 服务发现 -->
         <dependency>
             <groupId>com.alibaba.cloud</groupId>
