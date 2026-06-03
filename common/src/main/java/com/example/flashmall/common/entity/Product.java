@@ -1,6 +1,9 @@
 package com.example.flashmall.common.entity;
 
 import lombok.Data;
+
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -22,9 +25,11 @@ public class Product implements Serializable {
     private Long shopId;
 
     // 商品标题
+    @NotBlank(message = "商品标题不能为空")
     private String title;
 
     // 原价
+    @NotNull(message = "商品价格不能为空")
     private BigDecimal price;
 
     // 商品描述

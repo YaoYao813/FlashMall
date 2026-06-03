@@ -4,8 +4,12 @@ import com.example.flashmall.common.util.Result;
 import com.example.flashmall.user.entity.Address;
 import com.example.flashmall.user.service.AddressService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import javax.validation.Valid;
+
+@Validated
 @RestController
 @RequestMapping("/api/address")
 public class AddressController {
@@ -19,14 +23,14 @@ public class AddressController {
     }
 
     @PostMapping
-    public Result add(@RequestBody Address address, @RequestHeader("X-User-Id") Long userId) {
+    public Result add(@Valid @RequestBody Address address, @RequestHeader("X-User-Id") Long userId) {
         address.setUserId(userId);
         addressService.add(address);
         return Result.success(null, "添加成功");
     }
 
     @PutMapping("/{id}")
-    public Result update(@PathVariable Long id, @RequestBody Address address) {
+    public Result update(@PathVariable Long id, @Valid @RequestBody Address address) {
         address.setId(id);
         addressService.update(address);
         return Result.success(null, "更新成功");

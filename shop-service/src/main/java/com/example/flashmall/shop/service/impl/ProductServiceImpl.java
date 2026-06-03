@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.flashmall.common.entity.Product;
 import com.example.flashmall.common.util.PageResult;
 import com.example.flashmall.common.util.RedisKeyUtil;
-import com.example.flashmall.shop.mapper.ProductMapper;
+import com.example.flashmall.common.mapper.ProductMapper;
 import com.example.flashmall.shop.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;

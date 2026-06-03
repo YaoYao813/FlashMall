@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.example.flashmall.common.entity.Order;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import java.util.List;
 
@@ -17,5 +18,6 @@ public interface OrderMapper extends BaseMapper<Order> {
             + "#{item.price}, #{item.quantity}, #{item.totalAmount}, #{item.status})"
             + "</foreach>"
             + "</script>")
+    @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertBatch(@Param("list") List<Order> orders);
 }

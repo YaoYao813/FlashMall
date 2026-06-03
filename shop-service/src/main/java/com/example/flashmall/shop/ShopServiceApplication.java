@@ -8,7 +8,7 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 
 @SpringBootApplication(scanBasePackages = {"com.example.flashmall.shop", "com.example.flashmall.common"})
 @EnableDiscoveryClient
-@MapperScan("com.example.flashmall.shop.mapper")
+@MapperScan({"com.example.flashmall.shop.mapper", "com.example.flashmall.common.mapper"})
 public class ShopServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(ShopServiceApplication.class, args);

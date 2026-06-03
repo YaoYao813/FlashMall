@@ -1,7 +1,7 @@
 package com.example.flashmall.shop.BloomFilterLoader;
 
 import com.example.flashmall.common.util.BloomFilterUtil;
-import com.example.flashmall.shop.mapper.ProductMapper;
+import com.example.flashmall.common.mapper.ProductMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;

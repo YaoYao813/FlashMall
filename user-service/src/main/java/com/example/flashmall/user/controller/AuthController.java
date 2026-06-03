@@ -4,8 +4,12 @@ import com.example.flashmall.common.util.Result;
 import com.example.flashmall.user.entity.User;
 import com.example.flashmall.user.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import javax.validation.Valid;
+
+@Validated
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -13,13 +17,13 @@ public class AuthController {
     private UserService userService;
 
     @PostMapping("/register")
-    public Result register(@RequestBody User user) {
+    public Result register(@Valid @RequestBody User user) {
         userService.register(user);
         return Result.success(null, "注册成功");
     }
 
     @PostMapping("/login")
-    public Result login(@RequestBody LoginRequest request) {
+    public Result login(@Valid @RequestBody LoginRequest request) {
         String token = userService.login(request.getUsername(), request.getPassword());
         return Result.success(token);
     }

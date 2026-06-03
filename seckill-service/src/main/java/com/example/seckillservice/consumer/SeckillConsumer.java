@@ -2,9 +2,11 @@ package com.example.seckillservice.consumer;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.flashmall.common.entity.Order;
+import com.example.flashmall.common.entity.Product;
 import com.example.flashmall.common.entity.ProductStock;
 import com.example.flashmall.common.entity.SeckillMessage;
 import com.example.flashmall.common.mapper.OrderMapper;
+import com.example.flashmall.common.mapper.ProductMapper;
 import com.example.flashmall.common.mapper.ProductStockMapper;
 import com.example.seckillservice.config.RabbitMQConfig;
 import com.example.seckillservice.script.SeckillRedisScript;
@@ -13,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.Header;
@@ -35,9 +38,13 @@ public class SeckillConsumer {
     @Autowired
     private OrderMapper orderMapper;
     @Autowired
+    private ProductMapper productMapper;
+    @Autowired
     private SeckillRedisScript seckillRedisScript;
     @Autowired
     private RedissonClient redissonClient;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
 
     /**
      * 批量监听秒杀订单队列，按 productId 分组后批量落库
@@ -113,20 +120,40 @@ public class SeckillConsumer {
             throw new RuntimeException("乐观锁冲突，productId=" + productId);
         }
 
-        // 3. 批量创建订单（一条 INSERT SQL）
+        // 3. 查询商品真实信息
+        Product product = productMapper.selectById(productId);
+        String productName = product != null ? product.getTitle() : "秒杀商品-" + productId;
+        BigDecimal price = product != null ? product.getPrice() : BigDecimal.ZERO;
+
+        // 4. 批量创建订单（一条 INSERT SQL）
         List<Order> orders = new ArrayList<>(count);
         for (SeckillMessage msg : batch) {
             Order order = new Order();
             order.setOrderNo(msg.getOrderNo());
             order.setUserId(msg.getUserId());
             order.setProductId(msg.getProductId());
-            order.setProductName("秒杀商品-" + msg.getProductId());
-            order.setPrice(new BigDecimal("0.01"));
+            order.setProductName(productName);
+            order.setPrice(price);
             order.setQuantity(1);
-            order.setTotalAmount(new BigDecimal("0.01"));
+            order.setTotalAmount(price);
             order.setStatus(0);
             orders.add(order);
         }
         orderMapper.insertBatch(orders);
+
+        // 5. 发送延迟取消消息（15分钟后未支付自动取消，回滚库存）
+        for (Order order : orders) {
+            rabbitTemplate.convertAndSend(
+                    "order.delay.exchange",
+                    "order.cancel",
+                    order.getId(),
+                    message -> {
+                        message.getMessageProperties().setDelay(15 * 60 * 1000);
+                        return message;
+                    }
+            );
+        }
+        log.info("已发送延迟取消消息，数量={}, orderNos={}",
+                orders.size(), orders.stream().map(Order::getOrderNo).collect(Collectors.toList()));
     }
 }

@@ -6,11 +6,15 @@ import com.example.flashmall.common.util.PageResult;
 import com.example.flashmall.shop.service.ProductService;
 import com.example.flashmall.common.util.Result;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import com.example.flashmall.common.util.BloomFilterUtil;
 import com.example.flashmall.common.util.CacheLockUtil;
+
+import javax.validation.Valid;
 import java.util.Random;
 
+@Validated
 @RestController
 @RequestMapping("/api/product")
 @RequiredArgsConstructor
@@ -48,8 +52,8 @@ public class ProductController {
     }
 
     @PutMapping
-    public String updateProduct(@RequestBody Product product) {
+    public Result<String> updateProduct(@Valid @RequestBody Product product) {
         boolean success = productService.updateProduct(product);
-        return success ? "更新成功" : "更新失败";
+        return success ? Result.success(null, "更新成功") : Result.fail("更新失败");
     }
 }

@@ -3,13 +3,16 @@ package com.example.flashmall.shop.controller;
 import com.example.flashmall.common.entity.Shop;
 import com.example.flashmall.shop.service.ShopService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import com.example.flashmall.common.util.Result;
 import com.example.flashmall.common.util.BloomFilterUtil;
 import com.example.flashmall.common.util.CacheLockUtil;
 
+import javax.validation.Valid;
 import java.util.Random;
 
+@Validated
 @RestController
 @RequestMapping("/api/shop")
 @RequiredArgsConstructor
@@ -38,7 +41,7 @@ public class ShopController {
     }
 
     @PutMapping
-    public Result updateShop(@RequestBody Shop shop) {
+    public Result updateShop(@Valid @RequestBody Shop shop) {
         boolean ok = shopService.updateShop(shop);
         return ok ? Result.success(null, "更新成功") : Result.fail("更新失败");
     }
