@@ -1,0 +1,282 @@
+# ==================== FlashMall 微服务 Docker 编排（全容器化） ====================
+# 启动方式：docker compose up -d --build
+# 所有基础设施都在 Docker 中，无需外部 VM
+
+services:
+
+  # ==================== 基础设施 ====================
+
+  mysql:
+    image: mysql:8.0
+    container_name: flashmall-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: flashmall
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d    # 首次启动自动建表+种子数据
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    command: --default-authentication-plugin=mysql_native_password
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: flashmall-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  nacos:
+    image: nacos/nacos-server:v2.2.3
+    container_name: flashmall-nacos
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname                 # 用服务名注册，而非容器IP
+    ports:
+      - "8848:8848"                              # HTTP
+      - "9848:9848"                              # gRPC（Nacos 2.x 必需）
+    volumes:
+      - nacos_data:/home/nacos/data
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8848/nacos/v1/console/health/liveness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
+
+  rabbitmq:
+    build: ./rabbitmq
+    container_name: flashmall-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: "123456"
+    ports:
+      - "5672:5672"                              # AMQP
+      - "15672:15672"                            # 管理界面
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  sentinel:
+    build: ./sentinel
+    container_name: flashmall-sentinel
+    ports:
+      - "8858:8858"
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8858/ | grep 200 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ==================== 微服务 ====================
+
+  user-service:
+    build:
+      context: .
+      args:
+        SERVICE_NAME: user-service
+    container_name: flashmall-user-service
+    ports:
+      - "8081:8081"
+    environment:
+      NACOS_ADDR: nacos:8848
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: root
+      DB_PASSWORD: root123
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: flashmall-secret-key-2024
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    networks:
+      - flashmall-net
+    restart: on-failure
+
+  shop-service:
+    build:
+      context: .
+      args:
+        SERVICE_NAME: shop-service
+    container_name: flashmall-shop-service
+    ports:
+      - "8082:8082"
+    environment:
+      NACOS_ADDR: nacos:8848
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: root
+      DB_PASSWORD: root123
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: admin
+      RABBITMQ_PASSWORD: "123456"
+      JWT_SECRET: flashmall-secret-key-2024
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - flashmall-net
+    restart: on-failure
+
+  order-service:
+    build:
+      context: .
+      args:
+        SERVICE_NAME: order-service
+    container_name: flashmall-order-service
+    ports:
+      - "8083:8083"
+    environment:
+      NACOS_ADDR: nacos:8848
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: root
+      DB_PASSWORD: root123
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: admin
+      RABBITMQ_PASSWORD: "123456"
+      JWT_SECRET: flashmall-secret-key-2024
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - flashmall-net
+    restart: on-failure
+
+  seckill-service:
+    build:
+      context: .
+      args:
+        SERVICE_NAME: seckill-service
+    container_name: flashmall-seckill-service
+    ports:
+      - "8080:8080"
+    environment:
+      NACOS_ADDR: nacos:8848
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: root
+      DB_PASSWORD: root123
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: admin
+      RABBITMQ_PASSWORD: "123456"
+      SENTINEL_CLIENT_IP: seckill-service
+      JWT_SECRET: flashmall-secret-key-2024
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      sentinel:
+        condition: service_healthy
+    networks:
+      - flashmall-net
+    restart: on-failure
+
+  gateway:
+    build:
+      context: .
+      args:
+        SERVICE_NAME: gateway
+    container_name: flashmall-gateway
+    ports:
+      - "8888:8888"
+    environment:
+      NACOS_ADDR: nacos:8848
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SENTINEL_CLIENT_IP: gateway
+      JWT_SECRET: flashmall-secret-key-2024
+    depends_on:
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      sentinel:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      shop-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      seckill-service:
+        condition: service_started
+    networks:
+      - flashmall-net
+    restart: on-failure
+
+networks:
+  flashmall-net:
+    driver: bridge
+    name: flashmall-net
+
+volumes:
+  mysql_data:
+  redis_data:
+  nacos_data:
+  rabbitmq_data:

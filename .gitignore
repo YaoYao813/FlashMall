@@ -31,3 +31,23 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Misc ###
+*.csv
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+### Docker volumes ###
+mysql_data/
+redis_data/
+nacos_data/
+rabbitmq_data/
+
+### Sentinel Dashboard JAR (too large for repo) ###
+sentinel/*.jar
+
+### Docker ###
+docker-compose.override.yml

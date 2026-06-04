@@ -1,0 +1,37 @@
+# Maven 构建产物（在 Docker 内重新构建）
+target/
+*.jar
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Git
+.git/
+.gitignore
+
+# 日志
+*.log
+logs/
+
+# Docker 自身
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# 文档
+*.md
+claude-miaosha-conversation01.md
+
+# JMeter 测试文件
+*.jmx
+*.csv
+jmeter/
+
+# 临时文件
+*.tmp
+*.bak
+*~
