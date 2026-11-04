@@ -1,0 +1,32 @@
+[project]
+name = "flashmall-agent"
+version = "0.1.0"
+description = "FlashMall Seckill Copilot — 基于 LangGraph + MCP 的秒杀运营 Agent"
+requires-python = ">=3.10"
+# 版本在首次安装后按实际锁定，不预先猜
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "httpx",
+    "langgraph",
+    "langchain-core",
+    "mcp",
+    "redis",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "mcp_servers*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
