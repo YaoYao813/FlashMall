@@ -30,7 +30,16 @@ Agent → MCP 工具 → httpx → 网关 :8888 → seckill-service :8080
 2. **幂等键**：`Idempotency-Key` 由 Python 生成（`f"{thread_id}:{tool_call_id}"`），**不由模型提供**
 3. **审计**：落 `admin_audit_log`，记录谁、何时、什么参数、结果、是否被批准
 
-### 0.4 新增数据库对象（迁移文件 `mysql/migrations/2026-11-05-admin.sql`）
+### 0.4 新增数据库对象（`mysql/init/03-admin.sql`）
+
+`mysql/init/` 挂载到容器的 `/docker-entrypoint-initdb.d`，**首次启动自动执行**。
+脚本全部用 `CREATE TABLE IF NOT EXISTS`，因此对已有数据的库可以重复执行：
+
+```bash
+docker exec -i flashmall-mysql mysql -uroot -proot123 flashmall < mysql/init/03-admin.sql
+```
+
+现有 7 张表**不改结构**，活动状态由 `start_time` / `end_time` 推导。
 
 ```sql
 CREATE TABLE IF NOT EXISTS admin_idempotency (
@@ -53,7 +62,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 ```
 
-现有 7 张表**不做结构变更**。活动状态由 `start_time` / `end_time` 推导。
+活动状态由 `start_time` / `end_time` 推导，不新增 `status` 列。
 
 ---
 

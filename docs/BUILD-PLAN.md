@@ -36,7 +36,7 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 ### M1（11/05–11/06）Java 接口 1–3 + 迁移 SQL
 
 **产出**
-- `mysql/migrations/2026-11-05-admin.sql`（`admin_idempotency`、`admin_audit_log`）
+- `mysql/init/03-admin.sql`（`admin_idempotency`、`admin_audit_log`；幂等脚本，新环境自动执行，已有库手动跑一次）
 - seckill-service：`AdminSeckillController`、`AdminSeckillService`、`SeckillEventMapper`、`EventVO`、`EventStatus` 推导
 - 接口 1 创建（含幂等回放）、2 列表、3 修改/下线
 
