@@ -28,13 +28,15 @@ mvn spring-boot:run -pl seckill-service     # 单模块本地跑
 
 1. **Agent 不进秒杀主链路**——只在运营、诊断、数据分析侧旁路。
 2. **Java 是业务真相源**——`agent-service` 不直连 MySQL / Redis，只走 HTTP 接口。
-3. 不改已验证的秒杀链路（Lua 预减、MQ 消费、乐观锁），除非任务明确要求。
+3. 不改并发控制的任何一环（`seckill.lua`、`SeckillConsumer`、`StockRollbackConsumer`、`decrementStock`）；
+   允许在 Lua 之前加前置校验，见 `agent-service/contracts/tools.md` §1.6。
 4. 不把计划写成已完成；文档里的数字必须可复现。
 5. 密钥只放 `agent-service/.env`（已 gitignore），不提交、不写进示例文件。
 
 ## 已知限制（改代码会踩到）
 
-- 错误统一 `HTTP 200 + body.code=500`，调用方必须解析响应体，不能看 HTTP 状态码
+- 业务错误走 `HTTP 200 + body.code=500`（`Result.fail`），**鉴权失败是真正的 HTTP 401**（网关 `GlobalJwtFilter` 直接写 JSON）；调用方两者都要处理
+- 秒杀只读 Redis `seckill:stock:{productId}`（`RedisKeyUtil` 构建）；`seckill_event` 表有 8 条种子数据，但**没有 Mapper/Service，代码从不读取**，活动时间与库存当前不生效
 - 身份靠网关透传 `X-User-Id`，业务服务不鉴权；直连 8080–8083 可伪造身份
 - 所有写接口无幂等键
 - `seckill_event` 表有实体但无 Mapper / Service / Controller，从未使用
@@ -44,7 +46,10 @@ mvn spring-boot:run -pl seckill-service     # 单模块本地跑
 - `user.role` 字段存在但未使用，没有授权体系
 - 商品详情存在双层缓存与双层加锁，冷缓存时内层可能自旋超时返回 null
 
-## 决策依据
+## 开工顺序
+
+新会话接手时按顺序读：`docs/AGENT-SCOPE.md`（做什么）→ `docs/BUILD-PLAN.md`（做到哪、下一步）
+→ `agent-service/contracts/tools.md`（接口的唯一真相）。先读再写码。
 
 做什么 / 不做什么以 `docs/AGENT-SCOPE.md` 为准；被砍的想法记进 `IDEAS.md`；
 工具接口以 `agent-service/contracts/tools.md` 为准，先写契约再实现两端。
