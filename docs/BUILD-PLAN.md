@@ -22,8 +22,8 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 | 项 | 状态 |
 |---|---|
 | 仓库与脚手架 | ✅ 2026-11-04 提交 `新增 Agent 层脚手架与开发约定` |
-| Java admin 接口 | ⬜ 未开始 |
-| 秒杀前置校验 | ⬜ 未开始 |
+| Java admin 接口 | ✅ 接口 1–5 完成 11/05（95 条单测通过；M1 验收 19/19、M2 34/34、M3 21/21；删 `product.stock` 后复跑 M2 34/34、M3 21/21） |
+| 秒杀前置校验 | ✅ 11/05 完成（活动窗口 Redis 校验，100 并发零超卖） |
 | Python 客户端 / MCP | ⬜ 未开始 |
 | 图与确认卡片 | ⬜ 未开始 |
 | 评测 | ⬜ 未开始 |
@@ -40,10 +40,26 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 - seckill-service：`AdminSeckillController`、`AdminSeckillService`、`SeckillEventMapper`、`EventVO`、`EventStatus` 推导
 - 接口 1 创建（含幂等回放）、2 列表、3 修改/下线
 
-**验收**
-- `mvn -pl seckill-service test` 通过
+**验收（2026-11-04 完成）**
+- `mvn -pl seckill-service test` 通过（55 条）
 - 用 curl 打通：创建 → 重复同 key 返回 `replayed:true` 且**不新增记录** → 列表能看到 → 改价成功 → 已开始的活动改价被拒
 - 同一商品建第二场未结束活动被拒
+- 端到端脚本 19/19 通过，含：缺幂等键被拒、超库存被拒、非法 status 被拒、无 token 返回 401、中文商品名不乱码
+
+**11/04 验收中修掉的两个环境问题**
+- 容器 JVM 默认 UTC，活动状态整体偏 8 小时 → `docker-compose.yml` 给全部 Java 服务与 `mysql` 加 `TZ: Asia/Shanghai`
+- MySQL 客户端默认 latin1，种子数据里的中文按 latin1 落库成乱码 → `mysql/init/*.sql` 顶部加 `SET NAMES utf8mb4`
+- 接口 3 补充：未开始的活动也允许只传 `endTime` 下线（原实现会被「结束时间必须晚于当前时间」拒绝，导致建错的活动撤不掉）
+
+**数据现状（2026-11-04 实测，开工前必读）**
+- 8 个商品全部已有 `endTime=2027-12-31` 的活动 → 直接创建任何商品都会被「已有未结束活动」拒绝。
+  验收时先 `PUT` 把商品 7 的种子活动下线（`endTime=now`），再创建。
+- 商品 7 的 `product.stock=30`，而 `product_stock.stock=50`、种子活动 `stock=50`。
+  契约的 `stock <= product.stock` 按 30 校验，所以演示脚本里的「50 件」改为 **30 件**；
+  若坚持 50 件，需先定清「商品库存」以 `product` 还是 `product_stock` 为准并统一数据。
+- **后续统一（2026-11-05）**：创建/修改活动的上限校验已改为读 `product_stock.stock`；
+  `product.stock` 列已删除（建表/种子脚本同步更新，已有库执行
+  `mysql/migrations/2026-11-05-drop-product-stock.sql`）
 
 **不许破坏**：现有 18 个接口、`seckill.lua`、`SeckillConsumer`、`StockRollbackConsumer`
 
@@ -60,6 +76,14 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 - `increment +10` 后 DB 与 Redis 同步加 10；`increment -999` 被拒
 - **回归**：正常预热的商品仍能秒杀成功、重复抢购被拒、库存不足被拒
 
+**验收结果（2026-11-05 完成）**
+- 单测 85 条全绿（新增 `StockSyncServiceImplTest` 15 条、`SeckillEventCacheTest` 8 条、接口 3 预热刷新 4 条、秒杀前置校验 3 条）
+- `scripts/acceptance_m2.py` 34/34 通过，含：reset 两个 key、仓库不足拒绝预热、未开始/已结束/未预热三种提示、increment ±、下线刷新窗口
+- **并发回归**：商品 2 库存 50、100 个不同用户同时抢 → 恰好 50 成功 / 50 库存不足，Redis 与 `product_stock` 均归零，订单恰好 50 条
+- 实现口径：窗口 `{eventId,startTs,endTs}` 用 epoch 毫秒、无 TTL；`reset` 先校验 `product_stock` 剩余、再写库存、最后写窗口；接口 3 改时间/库存后刷新已存在的窗口，刷新失败删 key（fail-closed）；`dbStock=event.stock`（活动总配额），`redisStock` 为当前剩余
+- 已知数据口径：`event.stock` 是总配额，消费者扣的是 `product_stock`；两者初值可能不同（如商品 7 为 30/50），不影响防超卖；`reset` 已加仓库校验兜住「活动配额 > 仓库剩余」
+- **M3 已定**：`GMV = 已支付订单数 × event.seckill_price`。原因：消费者落库的 `order.price` 取的是 `product.price`（原价），不能直接 `SUM(order.price)`；消费者属禁改清单
+
 **不许破坏**：防超卖四道闸的任何一环。改完必须手工跑一遍「库存 50、并发 100 人」验证仍零超卖
 
 ### M3（11/08）接口 5 + 回归
@@ -70,6 +94,26 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 
 **验收**
 - 造 3 笔订单（1 支付、1 待支付、1 取消），核对 `orderCount/paidCount/gmv/payRate/ordersOutstanding` 全部对得上
+
+**验收结果（2026-11-05 完成）**
+- 单测 95 条全绿（新增 `EventStatsServiceImplTest` 10 条）
+- `scripts/acceptance_m3.py` 21/21 通过：3 人抢 10 件 → 1 支付 / 1 取消 / 1 待支付 →
+  `orderCount=3、paidCount=1、gmv=9.90、payRate=0.3333、ordersOutstanding=1、
+  stockTotal=10、stockConsumed=2、consumeRate=0.2、redisStock=8、dbStock=8`
+- 口径：`gmv = paidCount × event.seckill_price`（不能 SUM `order.total_amount`，它写的是原价）；
+  `stats.dbStock = product_stock.stock`（仓库剩余，与 stock-sync 的 `dbStock=event.stock` 不同义）；
+  `stockConsumed = stockTotal - redisStock` 是**净消耗**，取消回滚后会小于订单数
+- **验收中发现并修复的既有缺陷**：`order-service` 未配置消息转换器，默认 Java 序列化发出的
+  库存回滚消息被 `seckill-service` 的 Jackson 消费者判定为无法转换而直接丢弃，
+  导致「取消订单后 Redis 与 `product_stock` 都不回滚」。修复方式：给 order-service 增加
+  `Jackson2JsonMessageConverter` Bean（只改生产端，未动 `StockRollbackConsumer`）。
+  修复后 M2 验收回归 34/34
+- **库存口径统一**：创建/修改活动的上限校验从 `product.stock` 改为 `product_stock.stock`，
+  与预热校验同一真相源；`product.stock` 代码不再读取。
+  改后 M2 34/34、M3 21/21 回归通过
+- **`product.stock` 已删除（2026-11-05）**：`Product` 实体字段、`01-schema.sql`、`02-seed-data.sql`
+  同步移除；已有库执行 `mysql/migrations/2026-11-05-drop-product-stock.sql`（幂等，可重复执行）。
+  删列后再次复跑：M2 34/34、M3 21/21，商品列表接口正常返回（`Product` JSON 已无 `stock`）
 
 ### M4（11/09–11/11）Python：客户端 → MCP → 图 → 页面
 

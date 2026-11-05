@@ -12,6 +12,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: flashmall
+      # 时间约定 UTC+8；否则 CURRENT_TIMESTAMP 会写成 UTC，和业务日志差 8 小时
+      TZ: Asia/Shanghai
     ports:
       - "3308:3306"
     volumes:
@@ -121,6 +123,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       JWT_SECRET: flashmall-secret-key-2024
+      TZ: Asia/Shanghai
     depends_on:
       mysql:
         condition: service_healthy
@@ -153,6 +156,7 @@ services:
       RABBITMQ_USERNAME: admin
       RABBITMQ_PASSWORD: "123456"
       JWT_SECRET: flashmall-secret-key-2024
+      TZ: Asia/Shanghai
     depends_on:
       mysql:
         condition: service_healthy
@@ -187,6 +191,7 @@ services:
       RABBITMQ_USERNAME: admin
       RABBITMQ_PASSWORD: "123456"
       JWT_SECRET: flashmall-secret-key-2024
+      TZ: Asia/Shanghai
     depends_on:
       mysql:
         condition: service_healthy
@@ -222,6 +227,8 @@ services:
       RABBITMQ_PASSWORD: "123456"
       SENTINEL_CLIENT_IP: seckill-service
       JWT_SECRET: flashmall-secret-key-2024
+      # 活动时间按 UTC+8 约定（contracts/tools.md）；容器默认 UTC 会让「未开始/进行中/已结束」整体偏 8 小时
+      TZ: Asia/Shanghai
     depends_on:
       mysql:
         condition: service_healthy
@@ -251,6 +258,7 @@ services:
       REDIS_PORT: "6379"
       SENTINEL_CLIENT_IP: gateway
       JWT_SECRET: flashmall-secret-key-2024
+      TZ: Asia/Shanghai
     depends_on:
       redis:
         condition: service_healthy

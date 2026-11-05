@@ -1,5 +1,7 @@
 -- FlashMall 数据库建表脚本（Docker MySQL 首次启动时自动执行）
 -- 使用 CREATE TABLE IF NOT EXISTS 确保幂等
+-- 显式声明连接字符集，避免中文列注释/默认值被按 latin1 存储
+SET NAMES utf8mb4;
 
 USE flashmall;
 
@@ -37,7 +39,6 @@ CREATE TABLE IF NOT EXISTS `product` (
     `title` VARCHAR(256) NOT NULL COMMENT '商品标题',
     `price` DECIMAL(10,2) NOT NULL COMMENT '商品价格',
     `description` VARCHAR(1024) DEFAULT NULL COMMENT '商品描述',
-    `stock` INT DEFAULT 0 COMMENT '库存数量',
     `status` INT DEFAULT 1 COMMENT '状态：1=上架, 0=下架',
     `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),

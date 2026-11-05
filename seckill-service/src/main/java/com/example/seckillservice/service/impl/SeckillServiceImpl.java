@@ -3,7 +3,9 @@ package com.example.seckillservice.service.impl;
 import com.example.flashmall.common.entity.SeckillMessage;
 import com.example.flashmall.common.mapper.OrderMapper;
 import com.example.flashmall.common.mapper.ProductStockMapper;
+import com.example.seckillservice.cache.SeckillEventCache;
 import com.example.seckillservice.config.RabbitMQConfig;
+import com.example.seckillservice.dto.SeckillEventWindow;
 import com.example.seckillservice.script.SeckillRedisScript;
 import com.example.seckillservice.service.SeckillService;
 import lombok.extern.slf4j.Slf4j;
@@ -35,10 +37,16 @@ public class SeckillServiceImpl implements SeckillService {
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
+    @Autowired
+    private SeckillEventCache seckillEventCache;
+
     // 秒杀业务
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String seckill(Long userId, Long productId) {
+
+        // ========== 第零阶段：活动窗口校验（一次 GET，必须在 Lua 之前） ==========
+        assertEventOpen(productId);
 
         // ========== 第一阶段：Redis + Lua 预校验（内存操作，微秒级） ==========
         Long result = seckillRedisScript.executeSeckill(productId, userId);
@@ -67,6 +75,23 @@ public class SeckillServiceImpl implements SeckillService {
             throw new RuntimeException("系统繁忙，请稍后重试");
         }
         return orderNo;
+    }
+
+    /**
+     * 活动窗口校验：只读 Redis，不查库、不加锁、不改 Lua。
+     */
+    private void assertEventOpen(Long productId) {
+        SeckillEventWindow window = seckillEventCache.readWindow(productId);
+        if (window == null) {
+            throw new RuntimeException("活动不存在或未预热");
+        }
+        long now = System.currentTimeMillis();
+        if (now < window.getStartTs()) {
+            throw new RuntimeException("活动未开始");
+        }
+        if (now > window.getEndTs()) {
+            throw new RuntimeException("活动已结束");
+        }
     }
 
     // 创建订单号

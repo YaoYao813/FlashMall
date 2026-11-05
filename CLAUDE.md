@@ -24,6 +24,15 @@ mvn spring-boot:run -pl seckill-service     # 单模块本地跑
 
 依赖：MySQL 8 / Redis 7 / RabbitMQ 3.12（延迟消息插件）/ Nacos 2.2.3 / Sentinel 面板。
 
+时间与字符集：业务时间统一按 UTC+8；`docker-compose.yml` 已给 Java 服务与 MySQL 注入 `TZ=Asia/Shanghai`。
+`mysql/init/*.sql` 顶部有 `SET NAMES utf8mb4`，手动 source 种子脚本时不要去掉，否则 MySQL 客户端默认
+latin1，中文会按 latin1 落库成乱码。
+
+**数据库有两个实例，别弄混**：Docker 里的 MySQL 映射到宿主机 **3308**（容器内仍是 3306），
+而各模块 `application.properties` 的默认值是 `localhost:3306`（本地自行安装的 MySQL）。
+Docker 服务通过 `DB_HOST=mysql` 连容器；本地 `mvn spring-boot:run` 跑模块时不加环境变量会连到 3306。
+执行 `mysql/init` 或 `mysql/migrations` 脚本前，先确认连的是哪一个（`docker port flashmall-mysql`）。
+
 ## 硬约束
 
 1. **Agent 不进秒杀主链路**——只在运营、诊断、数据分析侧旁路。
@@ -36,10 +45,13 @@ mvn spring-boot:run -pl seckill-service     # 单模块本地跑
 ## 已知限制（改代码会踩到）
 
 - 业务错误走 `HTTP 200 + body.code=500`（`Result.fail`），**鉴权失败是真正的 HTTP 401**（网关 `GlobalJwtFilter` 直接写 JSON）；调用方两者都要处理
-- 秒杀只读 Redis `seckill:stock:{productId}`（`RedisKeyUtil` 构建）；`seckill_event` 表有 8 条种子数据，但**没有 Mapper/Service，代码从不读取**，活动时间与库存当前不生效
+- 秒杀先读 `seckill:event:{productId}` 窗口（未预热 / 未开始 / 已结束），再走 Lua；库存只读 `seckill:stock:{productId}`。
+  窗口无 TTL，Redis 清空或未 `reset` 的活动一律返回「活动不存在或未预热」
+- `product.stock` 已删除（2026-11-05）；库存唯一真相源是 `product_stock.stock`，
+  创建/修改活动的上限校验与预热校验都读它
+- `seckill_event.stock` 是活动**总配额**，消费者扣的是 `product_stock.stock`；两者初值可能不一致（商品 7 是 30/50），不影响防超卖
 - 身份靠网关透传 `X-User-Id`，业务服务不鉴权；直连 8080–8083 可伪造身份
-- 所有写接口无幂等键
-- `seckill_event` 表有实体但无 Mapper / Service / Controller，从未使用
+- 只有创建活动有幂等键；`PUT /{id}` 与 `POST /{id}/stock-sync` 无幂等键
 - `processBatchOrders` 被同类方法自调用，`@Transactional` 不生效
 - 消费者 `nack requeue=false` 且无死信队列，业务异常会丢消息
 - 库存回滚不幂等，`stock + 1` 无上限，并发取消会双回滚

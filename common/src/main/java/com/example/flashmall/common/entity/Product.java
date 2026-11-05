@@ -35,10 +35,8 @@ public class Product implements Serializable {
     // 商品描述
     private String description;
 
-    // 普通库存（秒杀时库存由Redis管理，此字段可设为0）
-    private Integer stock;
-
     // 商品状态：1=上架，0=下架
+    // 库存不在这里：唯一真相源是 product_stock.stock（消费者实际扣减的表）
     private Integer status;
 
     // 创建时间

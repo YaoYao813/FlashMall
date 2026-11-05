@@ -85,7 +85,7 @@ Header：`Authorization: Bearer <jwt>`、`Idempotency-Key: <thread_id:tool_call_
 |---|---|
 | 商品不存在 | 商品不存在 |
 | `seckillPrice >= product.price` | 秒杀价必须低于商品原价 |
-| `stock <= 0` 或 `stock > product.stock` | 秒杀库存必须在 1 到商品库存之间 |
+| `stock <= 0` 或 `stock > product_stock.stock` | 秒杀库存必须在 1 到商品库存之间 |
 | `startTime >= endTime` | 开始时间必须早于结束时间 |
 | `endTime <= now` | 结束时间必须晚于当前时间 |
 | 同 `productId` 已有 `endTime > now` 的活动 | 该商品已存在未结束的活动（id=9） |
@@ -109,6 +109,8 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 - 字段均可选，至少传一个
 - `status=running` 或 `ended` 时**只允许**改 `endTime`（下线）。下线用法：`{"endTime":"<当前时间>"}`
 - 已下线（`endTime <= now`）的活动不可再改
+- 修改成功后，如果该商品**已经预热**（`seckill:event:{productId}` 存在），同步刷新窗口；
+  未开始的活动改库存时同时刷新 Redis 库存；刷新失败则删除窗口 key（fail-closed，宁可「未预热」也不按旧窗口放行）
 
 ### 1.4 `POST /api/admin/seckill/events/{id}/stock-sync` — 预热 / 增量调整
 
@@ -117,22 +119,33 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 {"mode": "increment", "delta": 10}
 ```
 
-- `reset`：要求 `status=pending`。写 `seckill:stock:{productId}` = `event.stock`，
-  写 `seckill:event:{productId}` = `{"eventId":9,"startTs":...,"endTs":...}`
-- `increment`：要求 `status=running`。`event.stock += delta` 与 Redis `INCRBY` **同值同锁**执行；
-  结果不得 `< 0`；需加分布式锁（复用 `Redisson` 或 `CacheLockUtil`），防止并发调整与秒杀扣减交错
+- `reset`：要求 `status=pending`。**先写库存、再写窗口**（顺序不可反，保证窗口存在时库存一定就位）：
+  - `seckill:stock:{productId}` = `event.stock`
+  - `seckill:event:{productId}` = `{"eventId":9,"startTs":<epoch毫秒>,"endTs":<epoch毫秒>}`
+  - 时间按 `Asia/Shanghai` 把 DB 的 `LocalDateTime` 转成 epoch 毫秒
+  - 写 Redis 前先读 `product_stock.stock` 校验 `event.stock <= 仓库剩余`，不足则拒绝预热
+    （否则 Redis 可卖数会多于仓库，用户抢到后会在消费者侧失败；消费者无死信）
+- `increment`：要求 `status=running`，`delta != 0`。加分布式锁后 Redis `INCRBY` 与
+  DB `stock = stock + delta` 同值同增；任一结果会让库存 `< 0` 时整体拒绝并补偿 Redis
 - `data`：`{"dbStock":50,"redisStock":50,"mode":"reset"}`
+  - `dbStock` = `seckill_event.stock`（活动**总配额**，成交后不变）
+  - `redisStock` = Redis 当前**剩余可抢**；reset 时两者相等，成交或 increment 后可以不等
+- 错误（`code=500` + 中文 message）：
+  `活动不存在`、`只有未开始的活动可以预热`、`仓库库存不足，无法预热：活动库存 X，仓库剩余 Y`、
+  `只有进行中的活动可以调整库存`、`库存调整量不能为 0`、`调整后库存不能为负数`、
+  `活动未预热，请先预热`、`库存调整正忙，请稍后重试`、`库存同步失败，请稍后重试`
 
-只读 Key 约定（`RedisKeyUtil` 里已有 `SEC KILL_EVENT_KEY` 常量但从未使用，本次启用）：
+只读 Key 约定（`RedisKeyUtil` 里已有的 `SECKILL_EVENT_KEY` 常量从未使用，本次启用；
+旧 `getSeckillEventKey(Long seckillEventId)` 按活动 id 取 key 的语义删除，只保留按 `productId` 的一套）：
 
 | Key | 内容 | 写入方 |
 |---|---|---|
-| `seckill:stock:{productId}` | 剩余库存字符串 | stock-sync |
-| `seckill:event:{productId}` | `{"eventId","startTs","endTs"}` | stock-sync |
+| `seckill:stock:{productId}` | 剩余库存字符串 | stock-sync、Lua、预热 |
+| `seckill:event:{productId}` | `{"eventId","startTs","endTs"}`，epoch 毫秒 | stock-sync、接口 3 刷新 |
 | `seckill:user:{productId}:{userId}` | 去重标记，TTL 3600s | Lua |
 
-> `RedisKeyUtil.getSeckillEventKey(Long)` 当前形参按「活动 id」实现，与秒杀侧只有 `productId` 的事实不符。
-> 实现时改为按 `productId` 取名，或新增 `buildSeckillEventKey(productId)`，**不要两套并存**。
+> 窗口 key **不设 TTL**：活动结束后仍要能返回「活动已结束」，TTL 到期会变成「未预热」，消息不准。
+> 清理留给后续版本。
 
 ### 1.5 `GET /api/admin/seckill/events/{id}/stats` — 统计快照
 
@@ -147,18 +160,28 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 
 口径：
 
-- `orderCount`：`order.product_id=?` 且 `create_time` 落在活动区间
-- `paidCount`：上述订单中 `status ∈ (1,2,3)`
-- `gmv`：上述已支付订单的 `total_amount` 求和
-- `stockConsumed = stockTotal - redisStock`；`ordersOutstanding`：`status=0` 的订单数
-- Redis 不可达时 `redisStock = null`，**不要用 0 冒充**
+- `orderCount`：`order.product_id=?` 且 `create_time` 落在 `[start_time, end_time]`
+- `paidCount`：上述订单中 `status ∈ (1,2,3)`（已支付 / 已发货 / 已完成）
+- `gmv`：`paidCount × event.seckill_price`，保留 2 位小数。
+  **不要 `SUM(order.total_amount)`**：消费者落库写的是 `product.price`（原价），不是秒杀成交价
+- `payRate = paidCount / orderCount`；`orderCount=0` 时为 `0`
+- `stockTotal = event.stock`（活动总配额，`increment` 后会变）
+- `stockConsumed = stockTotal - redisStock`；`consumeRate = stockConsumed / stockTotal`
+  （两者是**净消耗**：取消/超时回滚会让它变小，所以可能小于 `orderCount`）
+- `stock.dbStock = product_stock.stock`（仓库剩余）。注意与 stock-sync 的
+  `dbStock = event.stock`（活动总配额）同名不同义；统计这里取它是为了能诊断 Redis 与仓库的漂移
+- `ordersOutstanding`：上述订单中 `status=0` 的订单数
+- Redis 不可达时 `redisStock = null`，**不要用 0 冒充**；此时 `stockConsumed` 与
+  `consumeRate` 也返回 `null`（库存未知，比率同样未知）
+- `stockTotal=0` 时 `consumeRate = null`
+- 口径边界：消费者积压导致订单在 `end_time` 之后才落库的，不计入本场统计
 
 ### 1.6 秒杀链路唯一改动
 
 `SeckillServiceImpl.seckill()` 开头，在执行 Lua 之前：
 
-1. 读 `seckill:event:{productId}`，不存在 → `throw RuntimeException("活动不存在或未预热")`
-2. `now` 不在 `[startTs, endTs]` → `"活动未开始"` / `"活动已结束"`
+1. 读一次 `seckill:event:{productId}`，不存在或 JSON 解析失败 → `throw RuntimeException("活动不存在或未预热")`
+2. `System.currentTimeMillis()` 不在 `[startTs, endTs]` → `"活动未开始"` / `"活动已结束"`（epoch 毫秒比较）
 3. 之后原样走 `seckillRedisScript.executeSeckill(...)`
 
 **不许改** `seckill.lua`、`SeckillConsumer`、`StockRollbackConsumer`、`ProductStockMapper.decrementStock`。
@@ -238,6 +261,8 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 ```
 
 - **映射**：`POST /api/admin/seckill/events` → 成功后自动 `POST .../{id}/stock-sync {"mode":"reset"}`
+  - 两步不是原子的：创建成功后 reset 可能因「仓库库存不足」失败。此时活动已建但未预热，
+    工具必须如实返回两部分结果（活动 id + 预热失败原因），不能报整体成功
 - **确认卡片**：展示商品名、秒杀价（并标注原价）、数量、起止时间、影响范围（会写入 Redis 并可被抢购）
 - **幂等键**：`{thread_id}:{tool_call_id}`
 - **审计**：落库，`approved` 记录用户是否点了确认

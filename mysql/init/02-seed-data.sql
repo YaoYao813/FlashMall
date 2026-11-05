@@ -1,6 +1,8 @@
 -- FlashMall 种子测试数据
 -- 密码均为 123456 的 BCrypt 加密结果
 -- 注意：使用 INSERT IGNORE 防止重复执行时出错
+-- 必须显式声明连接字符集：MySQL 客户端默认 latin1，会把本文件里的 UTF-8 中文按 latin1 解读后存成乱码
+SET NAMES utf8mb4;
 
 USE flashmall;
 
@@ -16,15 +18,15 @@ INSERT IGNORE INTO `shop` (`id`, `name`, `description`, `owner_id`, `status`) VA
 (2, '数码配件店', '手机电脑周边配件', 2, 1);
 
 -- ========== 测试商品 ==========
-INSERT IGNORE INTO `product` (`id`, `shop_id`, `title`, `price`, `description`, `stock`, `status`) VALUES
-(1,  1, '[秒杀] Java核心思想',           89.00,  'Java编程经典之作',                 100, 1),
-(2,  1, '[秒杀] SpringBoot实战指南',     69.00,  'SpringBoot入门到精通',              80,  1),
-(3,  1, '[秒杀] MySQL从入门到精通',      59.00,  '数据库开发必备',                     120, 1),
-(4,  1, '[秒杀] Redis实战指南',          49.00,  '缓存与分布式锁实战',                 90,  1),
-(5,  2, '蓝牙降噪耳机',                  129.00, '主动降噪长续航',                     150, 1),
-(6,  2, '机械键盘青轴',                  199.00, '87键有线机械键盘',                   60,  1),
-(7,  2, '4K显示器',                      899.00, '27寸4K IPS显示器',                   30,  1),
-(8,  2, '无线鼠标',                      55.00,  '静音办公游戏鼠标',                   110, 1);
+INSERT IGNORE INTO `product` (`id`, `shop_id`, `title`, `price`, `description`, `status`) VALUES
+(1,  1, '[秒杀] Java核心思想',           89.00,  'Java编程经典之作',                 1),
+(2,  1, '[秒杀] SpringBoot实战指南',     69.00,  'SpringBoot入门到精通',              1),
+(3,  1, '[秒杀] MySQL从入门到精通',      59.00,  '数据库开发必备',                     1),
+(4,  1, '[秒杀] Redis实战指南',          49.00,  '缓存与分布式锁实战',                 1),
+(5,  2, '蓝牙降噪耳机',                  129.00, '主动降噪长续航',                     1),
+(6,  2, '机械键盘青轴',                  199.00, '87键有线机械键盘',                   1),
+(7,  2, '4K显示器',                      899.00, '27寸4K IPS显示器',                   1),
+(8,  2, '无线鼠标',                      55.00,  '静音办公游戏鼠标',                   1);
 
 -- ========== 秒杀库存（乐观锁版本号初始化为0） ==========
 INSERT IGNORE INTO `product_stock` (`id`, `product_id`, `stock`, `version`) VALUES
