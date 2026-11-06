@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(title="FlashMall Seckill Copilot", lifespan=lifespan)
+app = FastAPI(title="FlashMall 运营决策 Agent", lifespan=lifespan)
 
 
 class ChatRequest(BaseModel):

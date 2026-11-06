@@ -1,7 +1,7 @@
 [project]
 name = "flashmall-agent"
 version = "0.1.0"
-description = "FlashMall Seckill Copilot — 基于 LangGraph + MCP 的秒杀运营 Agent"
+description = "FlashMall 运营决策 Agent — 高并发秒杀商城的 AI 运营侧助手（LangGraph + MCP）"
 requires-python = ">=3.10"
 # 版本在首次安装后按实际锁定，不预先猜
 dependencies = [

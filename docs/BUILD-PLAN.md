@@ -257,6 +257,10 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 - 验证方式：临时桩服务（不在仓库内）模拟四类 SSE——首屏空状态、点示例出表格、建活动出卡片 + 徽标、
   批准后徽标消失；`pytest` 39 条、`ruff` 全过。**尚未连真实后端跑**（本机 Docker 未启动），
   录屏前必须补一遍 `scripts/acceptance_m4.py` 与手工五步
+- 对外名称统一为 **「FlashMall：高并发秒杀商城配套 AI 运营决策 Agent」**（2026-11-06 定）：
+  README 标题、页面 `<title>`、FastAPI title、`pyproject` 描述、AGENT-SCOPE 均已对齐；
+  页面 `<h1>` 用短名「FlashMall 运营决策 Agent」。`Seckill Copilot` 仅作为历史代号留在
+  `docs/agent-upgrade-plan.md`（过期方案，不改）
 - 已知取舍：`GET /state` 只恢复文本，刷新后列表卡片会退回纯文本
 - 用户实测反馈修掉的一处：确认卡片出现时徽标让底部输入区变高，固定的 96px 留白盖住卡片最后一行。
   改为把输入区实际高度写进 CSS 变量（`--composer-h`），`setPending` 里显式重算一次；

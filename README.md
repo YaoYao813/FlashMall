@@ -1,4 +1,4 @@
-# FlashMall · 秒杀商城 + 运营侧 AI Agent
+# FlashMall：高并发秒杀商城配套 AI 运营决策 Agent
 
 > Java 负责主链路的正确性，Python Agent 负责让运营「说一句话」就能干活 —— 两边用一份 HTTP 契约隔开，Agent 不进秒杀链路。
 
