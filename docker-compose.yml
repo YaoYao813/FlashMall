@@ -47,6 +47,24 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
+  # Agent 层 checkpointer 专用：LangGraph 的 Redis saver 依赖 RedisJSON + RediSearch，
+  # 纯 redis:7-alpine 没有这两个模块。用独立实例，不碰秒杀链路的 redis（6380）。
+  redis-stack:
+    image: redis/redis-stack-server:7.2.0-v10
+    container_name: flashmall-agent-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_stack_data:/data
+    networks:
+      - flashmall-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   nacos:
     image: nacos/nacos-server:v2.2.3
     container_name: flashmall-nacos
@@ -286,5 +304,6 @@ networks:
 volumes:
   mysql_data:
   redis_data:
+  redis_stack_data:
   nacos_data:
   rabbitmq_data:

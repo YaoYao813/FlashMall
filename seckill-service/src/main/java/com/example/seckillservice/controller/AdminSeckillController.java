@@ -58,9 +58,14 @@ public class AdminSeckillController {
     }
 
     @PostMapping("/{id}/stock-sync")
-    public Result<StockSyncVO> stockSync(@PathVariable("id") Long id,
-                                         @RequestBody StockSyncRequest request) {
-        return Result.success(stockSyncService.syncStock(id, request));
+    public Result<StockSyncVO> stockSync(
+            @PathVariable("id") Long id,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = "X-User-Id", required = false) Long operatorId,
+            @RequestHeader(value = "X-Tool-Name", required = false) String toolName,
+            @RequestBody StockSyncRequest request) {
+        return Result.success(
+                stockSyncService.syncStock(id, request, idempotencyKey, operatorId, toolName));
     }
 
     @GetMapping("/{id}/stats")

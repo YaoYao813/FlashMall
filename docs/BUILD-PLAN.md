@@ -22,14 +22,17 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 | 项 | 状态 |
 |---|---|
 | 仓库与脚手架 | ✅ 2026-11-04 提交 `新增 Agent 层脚手架与开发约定` |
-| Java admin 接口 | ✅ 接口 1–5 完成 11/05（95 条单测通过；M1 验收 19/19、M2 34/34、M3 21/21；删 `product.stock` 后复跑 M2 34/34、M3 21/21） |
+| Java admin 接口 | ✅ 接口 1–5 完成 11/05（102 条单测通过；M1 验收 19/19、M2 34/34、M3 21/21；删 `product.stock` 后复跑 M2 34/34、M3 21/21） |
 | 秒杀前置校验 | ✅ 11/05 完成（活动窗口 Redis 校验，100 并发零超卖） |
-| Python 客户端 / MCP | ⬜ 未开始 |
-| 图与确认卡片 | ⬜ 未开始 |
+| Python 客户端 / MCP | ✅ 11/05（客户端 8 条单测；5 个 MCP 工具经 stdio 真实调通） |
+| 图与确认卡片 | ✅ 11/05（验收 26/26；headless Chrome 实测：挂起刷新恢复、批准执行、写后读不串台） |
 | 评测 | ⬜ 未开始 |
 | README / 演示 | ⬜ 未开始 |
 
 硬截止：**2026-11-13 23:59**。一旦有面试，暂停开发去准备面试。
+
+加分项（压测、对账、traceId、注入测试等）都是**可选**，不占 M5 / M6 工期，清单见
+`docs/OPTIMIZATION-BACKLOG.md`，只有提前交付才从里面挑。
 
 ## 2. 里程碑
 
@@ -133,6 +136,31 @@ agent-service/contracts/tools.md，然后告诉我当前在哪个里程碑、
 - 杀进程重启后，挂起的确认仍能恢复
 
 **不许破坏**：`contracts/tools.md` 已定的字段名与路径
+
+**实施记录（2026-11-05，提前完成主体）**
+- Java 前置补齐：`AdminAuditLog` + `AdminAuditService`（best-effort、事务后写）；
+  `stock-sync` 的 `increment` 支持 `Idempotency-Key`（锁内二次检查）、`reason`、`replayed`；
+  `mvn -pl seckill-service -am test` **102 条**通过；M2 34/34、M3 21/21 回归通过
+- Python：`app/config.py`（`llm_api_key` 延迟校验）、`clients/flashmall.py`、`mcp_client.py`、
+  `mcp_servers/commerce_server.py`（5 工具）、`graph/`（router→clarify/read/plan_write→confirm→execute→respond）、
+  `main.py`（SSE）、`web/index.html`；`pytest` **26 条**、`ruff` 全过
+- 端到端：`scripts/acceptance_m4.py` **26/26**，连跑两次一致；覆盖创建/调整幂等回放、
+  拒绝无审计、批准审计 +1、跨实例恢复挂起确认
+- 环境坑（已修）：checkpointer 要求 Redis **db 0**（RediSearch 不能在非 0 库建索引）；
+  `mcp` 2.x 用 `MCPServer` 且字段是 `is_error`；DeepSeek 只支持 `json_mode`；
+  Windows 需要 `tzdata` 才能用 `ZoneInfo("Asia/Shanghai")`
+- 浏览器：headless Chrome 跑通「发消息出卡片 → 刷新后卡片仍在 → 批准执行 → 写后读列表不串台」
+- 踩到并修掉的 bug ①：上一轮写操作的 `result` 残留，导致下一轮查询被渲染成「没有符合条件的活动」；
+  现在 router 每轮清空上一轮结果，respond 按 intent 取结果，并加了回归测试（14 条）
+- 踩到并修掉的 bug ②（用户实测）：写操作之后问「有哪些进行的活动？」被 router 判成 `unknown`。
+  从 checkpoint 取真实历史重放，失败回合 5/5 复现：模型不是分类错，而是**直接回答用户、不输出 JSON**
+  ——历史按 `assistant` 角色原样喂，上一轮的活动列表把模型带偏成「接着写」。
+  同一批失败回合各跑 5 次（共 15 次）：原样喂 **4/15** 合法、助手回答截断 80 字 **5/15**、
+  压成一条 user 消息（「对话历史…／当前用户消息：X」）**15/15**。改法：历史压成一段文本喂，
+  `_classify` 加 `include_raw=True` 把模型原话打进日志，另加关键词兜底（模型 unknown 或调用失败时
+  用规则再猜一次；写意图仍要过确认卡片）。改后重放 3 个失败回合 **15/15**；
+  真实 SSE 端到端复跑「列表 → +1 批准 → 再问列表 → 活动经营数据追问 eventId」全部正常
+- 待做：MCP Inspector 手动确认（可选）、M5 评测
 
 ### M5（11/12）评测 25 条
 

@@ -15,6 +15,7 @@ import com.example.seckillservice.cache.SeckillEventCache;
 import com.example.seckillservice.dto.CreateEventRequest;
 import com.example.seckillservice.dto.UpdateEventRequest;
 import com.example.seckillservice.enums.EventStatus;
+import com.example.seckillservice.service.AdminAuditService;
 import com.example.seckillservice.service.AdminSeckillService;
 import com.example.seckillservice.vo.EventVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -57,6 +58,7 @@ public class AdminSeckillServiceImpl implements AdminSeckillService {
     private final TransactionOperations transactionOperations;
     private final ObjectMapper objectMapper;
     private final SeckillEventCache seckillEventCache;
+    private final AdminAuditService adminAuditService;
 
     // ==================== 接口 1：创建 ====================
 
@@ -79,7 +81,10 @@ public class AdminSeckillServiceImpl implements AdminSeckillService {
         log.info("创建秒杀活动：operatorId={}, productId={}, key={}",
                 operatorId, request.getProductId(), key);
         try {
-            return transactionOperations.execute(status -> doCreate(request, key));
+            EventVO created = transactionOperations.execute(status -> doCreate(request, key));
+            // 审计放在事务提交之后：审计写失败不能把已建好的活动回滚掉
+            adminAuditService.record("create_seckill_event", key, operatorId, request, created);
+            return created;
         } catch (DuplicateKeyException e) {
             // 并发同 key：先到的请求已提交，回放它的响应
             EventVO concurrent = replay(key);

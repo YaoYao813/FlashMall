@@ -18,4 +18,7 @@ public class StockSyncVO {
     private Integer dbStock;
     private Integer redisStock;
     private String mode;
+
+    /** 命中同一 Idempotency-Key 的回放时为 true，表示库存未被再次调整 */
+    private Boolean replayed;
 }

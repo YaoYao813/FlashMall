@@ -11,4 +11,7 @@ public class StockSyncRequest {
 
     private String mode;
     private Integer delta;
+
+    /** 调整原因，可选；写进审计 params_json，便于回溯为什么加减库存 */
+    private String reason;
 }

@@ -1,14 +1,19 @@
 package com.example.seckillservice.service.impl;
 
+import com.example.flashmall.common.entity.AdminIdempotency;
 import com.example.flashmall.common.entity.ProductStock;
 import com.example.flashmall.common.entity.SeckillEvent;
+import com.example.flashmall.common.mapper.AdminIdempotencyMapper;
 import com.example.flashmall.common.mapper.ProductStockMapper;
 import com.example.flashmall.common.mapper.SeckillEventMapper;
 import com.example.seckillservice.cache.SeckillEventCache;
 import com.example.seckillservice.dto.StockSyncRequest;
 import com.example.seckillservice.enums.EventStatus;
+import com.example.seckillservice.service.AdminAuditService;
 import com.example.seckillservice.service.StockSyncService;
 import com.example.seckillservice.vo.StockSyncVO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -17,7 +22,9 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -48,9 +55,18 @@ public class StockSyncServiceImpl implements StockSyncService {
     private final SeckillEventCache seckillEventCache;
     private final ProductStockMapper productStockMapper;
     private final RedissonClient redissonClient;
+    private final AdminIdempotencyMapper adminIdempotencyMapper;
+    private final ObjectMapper objectMapper;
+    private final AdminAuditService adminAuditService;
 
     @Override
     public StockSyncVO syncStock(Long eventId, StockSyncRequest request) {
+        return syncStock(eventId, request, null, null, null);
+    }
+
+    @Override
+    public StockSyncVO syncStock(Long eventId, StockSyncRequest request,
+                                 String idempotencyKey, Long operatorId, String toolName) {
         if (eventId == null) {
             throw new RuntimeException("活动ID不能为空");
         }
@@ -66,9 +82,18 @@ public class StockSyncServiceImpl implements StockSyncService {
         }
 
         if (MODE_RESET.equals(mode)) {
+            // reset 是 SET 语义，重复执行结果相同，不认幂等键
             return reset(event);
         }
-        return increment(event, request.getDelta());
+
+        String key = normalizeKey(idempotencyKey);
+        if (key != null) {
+            StockSyncVO replayed = replay(key);
+            if (replayed != null) {
+                return replayed;
+            }
+        }
+        return increment(event, request, key, operatorId, toolName);
     }
 
     private StockSyncVO reset(SeckillEvent event) {
@@ -97,11 +122,14 @@ public class StockSyncServiceImpl implements StockSyncService {
                     .dbStock(fresh.getStock())
                     .redisStock(redisStock)
                     .mode(MODE_RESET)
+                    .replayed(false)
                     .build();
         });
     }
 
-    private StockSyncVO increment(SeckillEvent event, Integer delta) {
+    private StockSyncVO increment(SeckillEvent event, StockSyncRequest request,
+                                  String key, Long operatorId, String toolName) {
+        Integer delta = request == null ? null : request.getDelta();
         if (delta == null || delta == 0) {
             throw new RuntimeException("库存调整量不能为 0");
         }
@@ -110,6 +138,14 @@ public class StockSyncServiceImpl implements StockSyncService {
             SeckillEvent fresh = requireStatus(event.getId(), EventStatus.RUNNING,
                     "只有进行中的活动可以调整库存");
             Long productId = fresh.getProductId();
+
+            // 拿到锁后再查一次：并发同键请求在排队等锁，先到的已经写了幂等记录
+            if (key != null) {
+                StockSyncVO replayed = replay(key);
+                if (replayed != null) {
+                    return replayed;
+                }
+            }
 
             Integer redisBefore = seckillEventCache.getStock(productId);
             if (redisBefore == null) {
@@ -146,11 +182,18 @@ public class StockSyncServiceImpl implements StockSyncService {
             }
             log.info("秒杀活动库存调整完成：eventId={}, productId={}, delta={}, dbStock={}, redisStock={}",
                     fresh.getId(), productId, delta, dbStock, redisStock);
-            return StockSyncVO.builder()
+            StockSyncVO vo = StockSyncVO.builder()
                     .dbStock(dbStock)
                     .redisStock(redisStock)
                     .mode(MODE_INCREMENT)
+                    .replayed(false)
                     .build();
+            if (key != null) {
+                saveIdempotency(key, vo);
+            }
+            adminAuditService.record(resolveToolName(toolName), key, operatorId,
+                    auditParams(fresh.getId(), delta, request.getReason()), vo);
+            return vo;
         });
     }
 
@@ -187,6 +230,64 @@ public class StockSyncServiceImpl implements StockSyncService {
                 lock.unlock();
             }
         }
+    }
+
+    // ==================== 幂等 / 审计 ====================
+
+    private String normalizeKey(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return null;
+        }
+        String trimmed = idempotencyKey.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private StockSyncVO replay(String key) {
+        AdminIdempotency record = adminIdempotencyMapper.selectById(key);
+        if (record == null) {
+            return null;
+        }
+        try {
+            StockSyncVO vo = objectMapper.readValue(record.getResponseJson(), StockSyncVO.class);
+            if (vo.getMode() == null) {
+                // 同一个键被用到了另一类写操作（例如创建活动），拒绝回放
+                throw new RuntimeException("幂等键已被其他请求使用");
+            }
+            vo.setReplayed(true);
+            return vo;
+        } catch (JsonProcessingException e) {
+            log.error("幂等记录解析失败：key={}", key, e);
+            throw new RuntimeException("幂等记录解析失败，请联系管理员");
+        }
+    }
+
+    /**
+     * 幂等记录写失败不影响已经生效的调整（Redis 与 DB 都已改），只记日志等人工核对。
+     */
+    private void saveIdempotency(String key, StockSyncVO vo) {
+        try {
+            AdminIdempotency record = new AdminIdempotency();
+            record.setIdempotencyKey(key);
+            record.setResponseJson(objectMapper.writeValueAsString(vo));
+            adminIdempotencyMapper.insert(record);
+        } catch (Exception e) {
+            log.error("写库存调整幂等记录失败（本次调整已生效）：key={}", key, e);
+        }
+    }
+
+    private String resolveToolName(String toolName) {
+        if (toolName == null || toolName.trim().isEmpty()) {
+            return "adjust_seckill_stock";
+        }
+        return toolName.trim();
+    }
+
+    private Map<String, Object> auditParams(Long eventId, Integer delta, String reason) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("eventId", eventId);
+        params.put("delta", delta);
+        params.put("reason", reason);
+        return params;
     }
 
     private void compensate(Long productId, int delta) {

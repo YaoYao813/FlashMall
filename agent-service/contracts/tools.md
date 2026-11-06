@@ -29,6 +29,10 @@ Agent → MCP 工具 → httpx → 网关 :8888 → seckill-service :8080
 1. **人工确认**：LangGraph `interrupt()` 挂起，前端展示确认卡片，`Command(resume=...)` 恢复
 2. **幂等键**：`Idempotency-Key` 由 Python 生成（`f"{thread_id}:{tool_call_id}"`），**不由模型提供**
 3. **审计**：落 `admin_audit_log`，记录谁、何时、什么参数、结果、是否被批准
+   - 审计行由 **Java 在业务执行成功时写入**，`approved=1`；Python 不直连 MySQL
+   - 用户拒绝确认 → 不产生业务请求，也不产生审计行（验收看「审计表无新增」）；
+     Python 侧只写一条结构化日志 `audit.rejected`（thread_id、tool_name、参数摘要）
+   - 幂等回放不重复写审计
 
 ### 0.4 新增数据库对象（`mysql/init/03-admin.sql`）
 
@@ -114,10 +118,14 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 
 ### 1.4 `POST /api/admin/seckill/events/{id}/stock-sync` — 预热 / 增量调整
 
+Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`、`Authorization`、`X-User-Id`
+
 ```json
 {"mode": "reset"}
-{"mode": "increment", "delta": 10}
+{"mode": "increment", "delta": 10, "reason": "活动热度高，临时加库存"}
 ```
+
+`reason` 可选，写进审计 `params_json`。
 
 - `reset`：要求 `status=pending`。**先写库存、再写窗口**（顺序不可反，保证窗口存在时库存一定就位）：
   - `seckill:stock:{productId}` = `event.stock`
@@ -127,9 +135,10 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
     （否则 Redis 可卖数会多于仓库，用户抢到后会在消费者侧失败；消费者无死信）
 - `increment`：要求 `status=running`，`delta != 0`。加分布式锁后 Redis `INCRBY` 与
   DB `stock = stock + delta` 同值同增；任一结果会让库存 `< 0` 时整体拒绝并补偿 Redis
-- `data`：`{"dbStock":50,"redisStock":50,"mode":"reset"}`
+- `data`：`{"dbStock":50,"redisStock":50,"mode":"reset","replayed":false}`
   - `dbStock` = `seckill_event.stock`（活动**总配额**，成交后不变）
   - `redisStock` = Redis 当前**剩余可抢**；reset 时两者相等，成交或 increment 后可以不等
+  - `replayed` = 命中同一幂等键的回放时为 `true`（库存不会被再次调整）
 - 错误（`code=500` + 中文 message）：
   `活动不存在`、`只有未开始的活动可以预热`、`仓库库存不足，无法预热：活动库存 X，仓库剩余 Y`、
   `只有进行中的活动可以调整库存`、`库存调整量不能为 0`、`调整后库存不能为负数`、
@@ -241,7 +250,12 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 ```
 
 - **映射**：`GET /api/admin/seckill/events?status=running` + 逐个 `GET .../{id}/stats`
-- **判定**：`redisStock - dbStock` 不等于 `ordersOutstanding` 时标记为可疑，输出差值
+- **判定**（任一成立即标记可疑，并输出具体差值）：
+  - `redisStock` 为 `null`（Redis 不可读，无法确认）
+  - `redisStock` 不在 `[0, stockTotal]` 内（预热/回滚把数量加坏）
+  - `stockConsumed > orderCount`（Redis 已扣但订单没落库，可能是消费者丢消息）
+  - `stock.dbStock - redisStock` 只作为参考差值展示，**不参与判定**：
+    活动配额与仓库余量本来就可以不相等（商品 7 是 30/50），且消费者会同步扣两边，差值无固定口径
 - **写操作**：否（**只诊断，不修复**；修复走 `adjust_seckill_stock`）
 
 ### 2.4 `create_seckill_event`（写）
@@ -265,6 +279,8 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
     工具必须如实返回两部分结果（活动 id + 预热失败原因），不能报整体成功
 - **确认卡片**：展示商品名、秒杀价（并标注原价）、数量、起止时间、影响范围（会写入 Redis 并可被抢购）
 - **幂等键**：`{thread_id}:{tool_call_id}`
+- **实现细节**：MCP 工具签名额外带 `idempotencyKey` 参数（默认空、为空直接拒绝），
+  由图的 `plan_write` 节点注入；模型不接触工具 schema，不会自行填写
 - **审计**：落库，`approved` 记录用户是否点了确认
 - **写操作**：是
 
@@ -282,9 +298,10 @@ Query：`status`（`all|pending|running|ended`，默认 `all`）、`productId?`�
 },"required":["eventId","delta","reason"]}
 ```
 
-- **映射**：`POST /api/admin/seckill/events/{id}/stock-sync {"mode":"increment","delta":n}`
+- **映射**：`POST /api/admin/seckill/events/{id}/stock-sync {"mode":"increment","delta":n,"reason":"..."}`，
+  header 带 `Idempotency-Key: {thread_id}:{tool_call_id}`；同键重复调用只加一次
 - **确认卡片**：展示调整前后库存、原因、影响（可能让更多人抢到或提前售罄）
-- **幂等键**：`{thread_id}:{tool_call_id}`
+- **幂等键**：`{thread_id}:{tool_call_id}`；同 §2.4，工具签名带 `idempotencyKey`，由 `plan_write` 注入
 - **写操作**：是
 
 ---
@@ -296,12 +313,16 @@ START → router(结构化输出: intent + slots)
       ├─ intent=query_events    → query_seckill_events → respond
       ├─ intent=query_stats     → get_seckill_stats    → respond
       ├─ intent=diagnose        → diagnose_stock       → respond
-      ├─ intent=create_event    → [slot 不全 → clarify] → create_seckill_event → interrupt → execute → respond
-      ├─ intent=adjust_stock    → [slot 不全 → clarify] → adjust_seckill_stock → interrupt → execute → respond
+      ├─ intent=create_event    → [slot 不全 → clarify] → plan_write → confirm(interrupt) → execute → respond
+      ├─ intent=adjust_stock    → [slot 不全 → clarify] → plan_write → confirm(interrupt) → execute → respond
       └─ intent=unknown/out_of_scope → respond（说明能做什么）
 ```
 
 - **router 一次调用同时出 intent 和 slots**，不拆成两次 LLM 调用
+- **幂等键只在 `plan_write` 生成**：`{thread_id}:{tool_call_id}`，先写入 checkpoint 再 `interrupt()`；
+  恢复时 `interrupt()` 所在节点会从头重跑，键必须在它之前的节点固定，否则重启/重试会换键导致重复执行
+- 恢复统一传 `Command(resume={"approved": true|false, "feedback": "..."})`，不接受裸 bool
+- 拒绝（`approved=false`）：`execute` 直接返回，不调工具、不写业务表；只记结构化日志 `audit.rejected`
 - Checkpointer：Redis，`thread_id` 由前端会话 id 提供；`interrupt` 挂起后进程重启仍可恢复
 - 工具返回统一走 **裁剪函数**：列表最多保留 10 条、长文本截断到 500 字
 - 节点内部异常一律转成 `respond`，不把堆栈丢给模型

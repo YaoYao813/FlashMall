@@ -12,9 +12,13 @@ dependencies = [
     "httpx",
     "langgraph",
     "langchain-core",
+    "langchain-openai",
+    "langgraph-checkpoint-redis",
     "mcp",
     "redis",
     "python-dotenv",
+    # Windows 自带 Python 没有 IANA 时区库，ZoneInfo("Asia/Shanghai") 需要它
+    "tzdata",
 ]
 
 [project.optional-dependencies]
@@ -30,3 +34,9 @@ include = ["app*", "mcp_servers*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["tests"]

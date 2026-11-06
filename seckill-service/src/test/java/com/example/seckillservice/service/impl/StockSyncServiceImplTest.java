@@ -1,14 +1,20 @@
 package com.example.seckillservice.service.impl;
 
+import com.example.flashmall.common.entity.AdminIdempotency;
 import com.example.flashmall.common.entity.ProductStock;
 import com.example.flashmall.common.entity.SeckillEvent;
+import com.example.flashmall.common.mapper.AdminIdempotencyMapper;
 import com.example.flashmall.common.mapper.ProductStockMapper;
 import com.example.flashmall.common.mapper.SeckillEventMapper;
 import com.example.seckillservice.cache.SeckillEventCache;
 import com.example.seckillservice.dto.StockSyncRequest;
+import com.example.seckillservice.service.AdminAuditService;
 import com.example.seckillservice.vo.StockSyncVO;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 
@@ -16,7 +22,9 @@ import java.time.LocalDateTime;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -36,6 +44,9 @@ class StockSyncServiceImplTest {
     private ProductStockMapper productStockMapper;
     private RedissonClient redissonClient;
     private RLock lock;
+    private AdminIdempotencyMapper idempotencyMapper;
+    private AdminAuditService adminAuditService;
+    private ObjectMapper objectMapper;
     private StockSyncServiceImpl service;
 
     @BeforeEach
@@ -45,10 +56,17 @@ class StockSyncServiceImplTest {
         productStockMapper = mock(ProductStockMapper.class);
         redissonClient = mock(RedissonClient.class);
         lock = mock(RLock.class);
+        idempotencyMapper = mock(AdminIdempotencyMapper.class);
+        adminAuditService = mock(AdminAuditService.class);
+        // 与 Spring Boot 默认一致：忽略未知字段，便于识别「键被别的工具用过」
+        objectMapper = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         lenient().when(redissonClient.getLock(anyString())).thenReturn(lock);
         lenient().when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(true);
         lenient().when(lock.isHeldByCurrentThread()).thenReturn(true);
-        service = new StockSyncServiceImpl(mapper, cache, productStockMapper, redissonClient);
+        lenient().when(idempotencyMapper.selectById(anyString())).thenReturn(null);
+        service = new StockSyncServiceImpl(mapper, cache, productStockMapper, redissonClient,
+                idempotencyMapper, objectMapper, adminAuditService);
     }
 
     // ==================== reset ====================
@@ -226,6 +244,80 @@ class StockSyncServiceImplTest {
                 () -> service.syncStock(9L, request("increment", 10)));
 
         assertEquals("库存调整正忙，请稍后重试", e.getMessage());
+        verifyNoInteractions(cache);
+    }
+
+    // ==================== 幂等 / 审计 ====================
+
+    @Test
+    void incrementWithKeyWritesIdempotencyAndAudit() {
+        SeckillEvent running = runningEvent();
+        SeckillEvent updated = runningEvent();
+        updated.setStock(60);
+        when(mapper.selectById(9L)).thenReturn(running, running, updated);
+        when(cache.getStock(7L)).thenReturn(40, 50);
+        when(cache.incrementStock(7L, 10)).thenReturn(50L);
+        when(mapper.incrementStock(9L, 10)).thenReturn(1);
+
+        StockSyncRequest request = request("increment", 10);
+        request.setReason("活动热度高");
+        StockSyncVO vo = service.syncStock(9L, request, "t:1", 3L, "adjust_seckill_stock");
+
+        assertFalse(vo.getReplayed());
+        ArgumentCaptor<AdminIdempotency> captor = ArgumentCaptor.forClass(AdminIdempotency.class);
+        verify(idempotencyMapper).insert(captor.capture());
+        assertEquals("t:1", captor.getValue().getIdempotencyKey());
+        assertTrue(captor.getValue().getResponseJson().contains("\"mode\":\"increment\""));
+        verify(adminAuditService).record(
+                eq("adjust_seckill_stock"), eq("t:1"), eq(3L), any(), any());
+    }
+
+    @Test
+    void incrementReplaysStoredResponseWithoutTouchingStock() throws Exception {
+        StockSyncVO stored = StockSyncVO.builder()
+                .dbStock(60).redisStock(50).mode("increment").replayed(false).build();
+        AdminIdempotency record = new AdminIdempotency();
+        record.setIdempotencyKey("t:1");
+        record.setResponseJson(objectMapper.writeValueAsString(stored));
+        when(idempotencyMapper.selectById("t:1")).thenReturn(record);
+        when(mapper.selectById(9L)).thenReturn(runningEvent());
+
+        StockSyncVO vo = service.syncStock(9L, request("increment", 10), "t:1", 3L, "adjust_seckill_stock");
+
+        assertTrue(vo.getReplayed());
+        assertEquals(60, vo.getDbStock());
+        verifyNoInteractions(cache, adminAuditService);
+        verify(mapper, never()).incrementStock(anyLong(), anyInt());
+        verify(idempotencyMapper, never()).insert(any());
+    }
+
+    @Test
+    void incrementWithoutKeySkipsIdempotency() {
+        SeckillEvent running = runningEvent();
+        SeckillEvent updated = runningEvent();
+        updated.setStock(60);
+        when(mapper.selectById(9L)).thenReturn(running, running, updated);
+        when(cache.getStock(7L)).thenReturn(40, 50);
+        when(cache.incrementStock(7L, 10)).thenReturn(50L);
+        when(mapper.incrementStock(9L, 10)).thenReturn(1);
+
+        service.syncStock(9L, request("increment", 10));
+
+        verify(idempotencyMapper, never()).insert(any());
+    }
+
+    @Test
+    void incrementRejectsKeyReusedByAnotherTool() throws Exception {
+        AdminIdempotency record = new AdminIdempotency();
+        record.setIdempotencyKey("t:1");
+        record.setResponseJson("{\"id\":9,\"productId\":7}");
+        when(idempotencyMapper.selectById("t:1")).thenReturn(record);
+        when(mapper.selectById(9L)).thenReturn(runningEvent());
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+                () -> service.syncStock(9L, request("increment", 10), "t:1", 3L, null));
+
+        assertEquals("幂等键已被其他请求使用", e.getMessage());
         verifyNoInteractions(cache);
     }
 

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlashMall 秒杀运营助手</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1f2329; --muted: #6b7280;
+    --line: #e5e7eb; --accent: #2563eb; --danger: #dc2626; --ok: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--text); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 96px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+  .stream { display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 88%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap;
+         word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .traces { font-size: 12px; color: var(--muted); background: #eef2ff; border-radius: 8px;
+            padding: 8px 10px; }
+  .traces .fail { color: var(--danger); }
+  .card { border: 1px solid #f59e0b; background: #fffbeb; border-radius: 12px; padding: 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  .card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .card td { padding: 4px 0; border-bottom: 1px dashed #fde68a; vertical-align: top; }
+  .card td:first-child { color: var(--muted); width: 92px; }
+  .card .impact { margin-top: 8px; font-size: 13px; color: #92400e; }
+  .card .resolved-note { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  button { font: inherit; border-radius: 8px; padding: 7px 14px; cursor: pointer;
+           border: 1px solid var(--line); background: #fff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); border-color: #fecaca; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .composer { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(246,247,249,.95);
+              border-top: 1px solid var(--line); padding: 12px 16px; }
+  .composer form { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
+  .composer input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+                    font: inherit; }
+  .composer button { padding: 10px 18px; }
+  .hint { max-width: 860px; margin: 6px auto 0; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FlashMall 秒杀运营助手</h1>
+  <div class="sub">查活动 · 看数据 · 诊断库存 · 建活动 / 调库存（写操作需确认）</div>
+  <div id="stream" class="stream"></div>
+</div>
+<div class="composer">
+  <form id="form">
+    <input id="input" autocomplete="off" placeholder="例如：有哪些进行中的活动" required>
+    <button class="primary" type="submit" id="send">发送</button>
+  </form>
+  <div class="hint">写操作会先弹确认卡片；刷新页面会恢复当前会话和待确认操作。</div>
+</div>
+<script>
+const streamEl = document.getElementById('stream');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const THREAD_KEY = 'flashmall.thread_id';
+
+let threadId = localStorage.getItem(THREAD_KEY) || null;
+let busy = false;
+
+function addMessage(role, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.textContent = text;
+  streamEl.appendChild(el);
+  window.scrollTo(0, document.body.scrollHeight);
+  return el;
+}
+
+function addTrace(trace) {
+  let box = streamEl.querySelector('.traces:last-of-type');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'traces';
+    streamEl.appendChild(box);
+  }
+  const line = document.createElement('div');
+  line.className = trace.ok ? '' : 'fail';
+  line.textContent = `${trace.tool} · ${trace.ok ? '成功' : '失败'}` +
+    (trace.replayed ? ' · 幂等回放' : '') +
+    (trace.message ? ` · ${trace.message}` : '');
+  box.appendChild(line);
+}
+
+function clearTraces() {
+  streamEl.querySelectorAll('.traces').forEach((el) => el.remove());
+}
+
+function renderCard(card) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  const rows = (card.fields || []).map(
+    (f) => `<tr><td>${escapeHtml(f.label)}</td><td>${escapeHtml(String(f.value ?? ''))}</td></tr>`
+  ).join('');
+  el.innerHTML = `<h3>${escapeHtml(card.title || '确认操作')}</h3>
+    <table>${rows}</table>
+    <div class="impact">${escapeHtml(card.impact || '')}</div>
+    <div class="actions">
+      <button class="primary" data-approve="1">批准执行</button>
+      <button class="danger" data-approve="0">拒绝</button>
+    </div>`;
+  el.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      el.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      const note = document.createElement('div');
+      note.className = 'resolved-note';
+      note.textContent = btn.dataset.approve === '1' ? '已批准，正在执行…' : '已拒绝，不会做任何修改';
+      el.appendChild(note);
+      resume(btn.dataset.approve === '1');
+    });
+  });
+  streamEl.appendChild(el);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function dispatch(event, data) {
+  if (event === 'meta') {
+    threadId = data.thread_id;
+    localStorage.setItem(THREAD_KEY, threadId);
+  } else if (event === 'trace') {
+    addTrace(data);
+  } else if (event === 'interrupt') {
+    renderCard(data);
+  } else if (event === 'message') {
+    addMessage('assistant', data.text);
+  } else if (event === 'error') {
+    addMessage('assistant', '出错了：' + data.message);
+  }
+}
+
+async function readSSE(response) {
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try { detail = (await response.json()).detail || detail; } catch (_) {}
+    addMessage('assistant', '请求失败：' + detail);
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf('\n\n')) >= 0) {
+      const raw = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      let event = 'message';
+      let data = '{}';
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim();
+        else if (line.startsWith('data: ')) data = line.slice(6);
+      }
+      try { dispatch(event, JSON.parse(data)); } catch (_) { /* 忽略坏包 */ }
+    }
+  }
+}
+
+async function withBusy(fn) {
+  if (busy) return;
+  busy = true;
+  sendBtn.disabled = true;
+  try { await fn(); } finally {
+    busy = false;
+    sendBtn.disabled = false;
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  withBusy(async () => {
+    input.value = '';
+    addMessage('user', text);
+    clearTraces();
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: threadId, message: text }),
+    });
+    await readSSE(response);
+  });
+});
+
+function resume(approved) {
+  withBusy(async () => {
+    const response = await fetch(`/api/chat/${encodeURIComponent(threadId)}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved, feedback: '' }),
+    });
+    if (response.status === 409) {
+      addMessage('assistant', '这个操作已经处理过了，没有待确认的内容。');
+      return;
+    }
+    clearTraces();
+    await readSSE(response);
+  });
+}
+
+async function restore() {
+  if (!threadId) return;
+  try {
+    const response = await fetch(`/api/chat/${encodeURIComponent(threadId)}/state`);
+    if (!response.ok) return;
+    const data = await response.json();
+    for (const message of data.messages || []) addMessage(message.role, message.text);
+    if (data.pending) renderCard(data.pending);
+  } catch (_) { /* 后端没起也不阻塞页面 */ }
+}
+
+restore();
+</script>
+</body>
+</html>

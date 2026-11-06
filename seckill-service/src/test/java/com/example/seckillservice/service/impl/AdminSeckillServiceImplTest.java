@@ -15,6 +15,7 @@ import com.example.flashmall.common.mapper.SeckillEventMapper;
 import com.example.flashmall.common.util.PageResult;
 import com.example.seckillservice.cache.SeckillEventCache;
 import com.example.seckillservice.dto.CreateEventRequest;
+import com.example.seckillservice.service.AdminAuditService;
 import com.example.seckillservice.dto.UpdateEventRequest;
 import com.example.seckillservice.vo.EventVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,6 +66,7 @@ class AdminSeckillServiceImplTest {
     private AdminIdempotencyMapper idempotencyMapper;
     private ObjectMapper objectMapper;
     private SeckillEventCache seckillEventCache;
+    private AdminAuditService adminAuditService;
     private AdminSeckillServiceImpl service;
 
     /**
@@ -84,6 +86,7 @@ class AdminSeckillServiceImplTest {
         productStockMapper = mock(ProductStockMapper.class);
         idempotencyMapper = mock(AdminIdempotencyMapper.class);
         seckillEventCache = mock(SeckillEventCache.class);
+        adminAuditService = mock(AdminAuditService.class);
         // 默认仓库可售 30；个别用例可覆盖
         lenient().when(productStockMapper.selectByProductId(anyLong()))
                 .thenReturn(warehouse(30));
@@ -100,7 +103,7 @@ class AdminSeckillServiceImplTest {
         };
         service = new AdminSeckillServiceImpl(
                 seckillEventMapper, productMapper, productStockMapper, idempotencyMapper, noTx,
-                objectMapper, seckillEventCache);
+                objectMapper, seckillEventCache, adminAuditService);
     }
 
     // ==================== 接口 1：创建 ====================
@@ -124,6 +127,8 @@ class AdminSeckillServiceImplTest {
         assertEquals(7L, vo.getProductId());
         assertFalse(vo.getReplayed());
         assertEquals("pending", vo.getStatus());
+        verify(adminAuditService).record(
+                eq("create_seckill_event"), eq(KEY), eq(1L), any(), any());
 
         ArgumentCaptor<SeckillEvent> eventCaptor = ArgumentCaptor.forClass(SeckillEvent.class);
         verify(seckillEventMapper).insert(eventCaptor.capture());
@@ -146,7 +151,7 @@ class AdminSeckillServiceImplTest {
         assertTrue(vo.getReplayed());
         assertEquals(9L, vo.getId());
         assertEquals("pending", vo.getStatus());
-        verifyNoInteractions(seckillEventMapper, productMapper);
+        verifyNoInteractions(seckillEventMapper, productMapper, adminAuditService);
         verify(idempotencyMapper, never()).insert(any());
     }
 
