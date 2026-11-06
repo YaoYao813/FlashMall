@@ -21,6 +21,7 @@ from app.graph.schemas import (
     RouterDecision,
     missing_slots,
     normalize_slots,
+    validate_slots,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,8 @@ SYSTEM_PROMPT = """你是 FlashMall 秒杀商城的运营助手，只做意图�
 3. 只抽用户明确说出的参数，没说的不要填、不要猜。
 4. 相对时间换算成 ISO8601（UTC+8），例如「明天下午 3 点」→ 2026-11-06T15:00:00。
 5. delta：正数表示增加，负数表示减少。「再加 20 件」→ 20，「减 10 件」→ -10。
-6. reason 用用户的原话概括，不要编造。
+6. reason 只填用户自己说的原因（例如「页面测试」「库存压太多」）。用户没说原因就留空，
+   绝不能把动作本身（例如「加 5 件」）或你自己的推测当理由。
 7. 只输出 JSON，格式：{{"intent": "...", "slots": {{...}}}}，不要输出其他文字。
 
 示例：
@@ -177,22 +179,32 @@ async def router_node(state: dict, config: RunnableConfig) -> dict:
     intent = decision.intent if decision else "unknown"
     slots = normalize_slots(intent, decision.slots) if decision else {}
 
+    source = "llm"
     if intent == "unknown":
         guess = guess_decision(text)
         if guess is None:
             logger.info("router：%r → unknown", text[:40])
-            return {"intent": "unknown", "slots": {}, "missing": []}
+            return {
+                "intent": "unknown",
+                "slots": {},
+                "missing": [],
+                "router_source": "unknown",
+            }
         logger.info("router：模型没给出有效意图，关键词兜底 %r → %s", text[:40], guess.intent)
         intent = guess.intent
         slots = normalize_slots(intent, guess.slots)
+        source = "keyword"
 
     missing = missing_slots(intent, slots)
+    invalid = validate_slots(intent, slots)
     # 新一轮用户输入开始：清掉上一轮的结果，否则 respond 会读到旧 result/tool_result
     # （曾出现：上次写操作成功后问活动列表，回复的是写操作的 data → 被渲染成空列表）
     update: dict[str, Any] = {
         "intent": intent,
         "slots": slots,
         "missing": missing,
+        "invalid": invalid,
+        "router_source": source,
         "tool_result": None,
         "result": None,
         "reply": "",
@@ -207,7 +219,7 @@ async def router_node(state: dict, config: RunnableConfig) -> dict:
             "diagnose": "diagnose_stock",
         }[intent]
         # 缺必填槽位时会被路由到 clarify，参数不完整就不要硬拼
-        update["tool_args"] = {} if missing else _read_tool_args(intent, slots)
+        update["tool_args"] = {} if (missing or invalid) else _read_tool_args(intent, slots)
     elif intent in WRITE_INTENTS:
         update["tool_name"] = (
             "create_seckill_event" if intent == "create_event" else "adjust_seckill_stock"
@@ -218,8 +230,9 @@ async def router_node(state: dict, config: RunnableConfig) -> dict:
 
 def route_after_router(state: dict) -> str:
     intent = state.get("intent")
+    blocked = bool(state.get("missing") or state.get("invalid"))
     if intent in WRITE_INTENTS:
-        return "clarify" if state.get("missing") else "plan_write"
+        return "clarify" if blocked else "plan_write"
     if intent in READ_INTENTS:
-        return "clarify" if state.get("missing") else "read"
+        return "clarify" if blocked else "read"
     return "respond"

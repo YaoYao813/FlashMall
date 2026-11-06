@@ -15,6 +15,11 @@ class AgentState(TypedDict, total=False):
     intent: str
     slots: dict[str, Any]
     missing: list[str]
+    # 槽位齐了但取值不合法（如开始时间 = 结束时间），同样走追问，不弹确认卡片
+    invalid: list[str]
+    # 本轮意图是谁定的：llm（模型给出）/ keyword（模型 unknown 后规则兜底）/ unknown（没人判出来）
+    # 评测要分开统计「模型判对」和「兜底救回来」，否则指标会虚高
+    router_source: str
 
     # 读分支：router 选好工具与参数，read 节点只负责调用
     tool_name: str | None

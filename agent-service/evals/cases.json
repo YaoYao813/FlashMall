@@ -1,0 +1,433 @@
+{
+  "version": "m5-v1",
+  "created": "2026-11-06",
+  "note": "开发集 25 条（split=dev）+ 留存集 5 条（split=holdout），共 30 条。留存集在提示词定稿前不许单独调参，最后一次性跑。",
+  "cases": [
+    {
+      "id": "ts-01",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "现在有哪些进行中的活动？",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "status": "running"
+        }
+      }
+    },
+    {
+      "id": "ts-02",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "商品 7 有没有活动",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "productId": 7
+        }
+      }
+    },
+    {
+      "id": "ts-03",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "有哪些进行的活动？",
+      "history": [
+        {
+          "role": "user",
+          "text": "有哪些进行的活动？"
+        },
+        {
+          "role": "assistant",
+          "text": "共 5 个活动（第 1/1 页，最多展示 10 条）：1. 活动 32 · 商品 2 · ¥39.90 · 库存 52 · running"
+        },
+        {
+          "role": "user",
+          "text": "活动 32 加 2 件，理由：页面测试"
+        },
+        {
+          "role": "assistant",
+          "text": "活动 32 库存已增加 2 件：活动库存 52，Redis 剩余 12。"
+        }
+      ],
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "status": "running"
+        }
+      }
+    },
+    {
+      "id": "ts-04",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "活动 32 的销量和支付率怎么样",
+      "expect": {
+        "intent": "query_stats",
+        "tool": "get_seckill_stats",
+        "args": {
+          "eventId": 32
+        }
+      }
+    },
+    {
+      "id": "ts-05",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "检查一下库存对不对",
+      "expect": {
+        "intent": "diagnose",
+        "tool": "diagnose_stock",
+        "args": {}
+      }
+    },
+    {
+      "id": "ts-06",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "今天天气怎么样",
+      "expect": {
+        "intent": "unknown",
+        "tool": null
+      }
+    },
+    {
+      "id": "ts-07",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "帮我删掉活动 32",
+      "expect": {
+        "tool": null
+      }
+    },
+    {
+      "id": "ts-08",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "那活动 9 呢",
+      "history": [
+        {
+          "role": "user",
+          "text": "活动 32 卖得怎么样"
+        },
+        {
+          "role": "assistant",
+          "text": "活动 32：订单 20 单，已支付 15 单，GMV ¥598.50，支付率 75%。"
+        }
+      ],
+      "expect": {
+        "intent": "query_stats",
+        "tool": "get_seckill_stats",
+        "args": {
+          "eventId": 9
+        }
+      }
+    },
+    {
+      "id": "sl-01",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "给商品 7 建个活动，299 块 9，50 件，2026-12-01 上午十点到十二点",
+      "expect": {
+        "intent": "create_event",
+        "tool": "create_seckill_event",
+        "args": {
+          "productId": 7,
+          "seckillPrice": 299.9,
+          "stock": 50,
+          "startTime": "2026-12-01T10:00:00",
+          "endTime": "2026-12-01T12:00:00"
+        }
+      }
+    },
+    {
+      "id": "sl-02",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "活动 32 加 2 件，理由：页面测试",
+      "expect": {
+        "intent": "adjust_stock",
+        "tool": "adjust_seckill_stock",
+        "args": {
+          "eventId": 32,
+          "delta": 2,
+          "reason": "页面测试"
+        }
+      }
+    },
+    {
+      "id": "sl-03",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "活动 9 减少 10 件，库存压太多了",
+      "expect": {
+        "intent": "adjust_stock",
+        "tool": "adjust_seckill_stock",
+        "args": {
+          "eventId": 9,
+          "delta": -10
+        }
+      }
+    },
+    {
+      "id": "sl-04",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "活动 32 的 GMV 是多少",
+      "expect": {
+        "intent": "query_stats",
+        "tool": "get_seckill_stats",
+        "args": {
+          "eventId": 32
+        }
+      }
+    },
+    {
+      "id": "sl-05",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "活动 9 的库存对不对",
+      "expect": {
+        "intent": "diagnose",
+        "tool": "diagnose_stock",
+        "args": {
+          "eventId": 9
+        }
+      }
+    },
+    {
+      "id": "sl-06",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "看看已结束的活动",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "status": "ended"
+        }
+      }
+    },
+    {
+      "id": "sl-07",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "查一下商品 7 的活动列表",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "productId": 7
+        }
+      }
+    },
+    {
+      "id": "cl-01",
+      "category": "clarify",
+      "split": "dev",
+      "message": "帮我建个活动，299 块，50 件，2026-12-01 上午十点到十二点",
+      "expect": {
+        "intent": "create_event",
+        "tool": null,
+        "reply_contains": [
+          "商品 id"
+        ]
+      }
+    },
+    {
+      "id": "cl-02",
+      "category": "clarify",
+      "split": "dev",
+      "message": "活动 32 加 5 件",
+      "expect": {
+        "intent": "adjust_stock",
+        "tool": null,
+        "reply_contains": [
+          "原因"
+        ]
+      }
+    },
+    {
+      "id": "cl-03",
+      "category": "clarify",
+      "split": "dev",
+      "message": "卖得怎么样",
+      "expect": {
+        "intent": "query_stats",
+        "tool": null,
+        "reply_contains": [
+          "活动 id"
+        ]
+      }
+    },
+    {
+      "id": "cl-04",
+      "category": "clarify",
+      "split": "dev",
+      "message": "给商品 7 建个活动，199 块，50 件",
+      "expect": {
+        "intent": "create_event",
+        "tool": null,
+        "reply_contains": [
+          "开始时间"
+        ]
+      }
+    },
+    {
+      "id": "cl-05",
+      "category": "clarify",
+      "split": "dev",
+      "message": "给这场活动加 3 件，理由：预热",
+      "expect": {
+        "intent": "adjust_stock",
+        "tool": null,
+        "reply_contains": [
+          "活动 id"
+        ]
+      }
+    },
+    {
+      "id": "ts-09",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "不要把活动 32 下线",
+      "expect": {
+        "read_only": true
+      }
+    },
+    {
+      "id": "ts-10",
+      "category": "tool_selection",
+      "split": "dev",
+      "message": "活动 32 好像卖完了",
+      "expect": {
+        "read_only": true
+      }
+    },
+    {
+      "id": "sl-08",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "给商品七建个活动，三百块，二十件，2026-12-08 上午十点到十二点",
+      "expect": {
+        "intent": "create_event",
+        "tool": "create_seckill_event",
+        "args": {
+          "productId": 7,
+          "seckillPrice": 300.0,
+          "stock": 20,
+          "startTime": "2026-12-08T10:00:00",
+          "endTime": "2026-12-08T12:00:00"
+        }
+      }
+    },
+    {
+      "id": "sl-09",
+      "category": "slot_extraction",
+      "split": "dev",
+      "message": "活动 32 加 5 件，理由：补货，然后把活动 9 也加 10 件",
+      "expect": {
+        "intent": "adjust_stock",
+        "tool": "adjust_seckill_stock",
+        "args": {
+          "eventId": 32,
+          "delta": 5,
+          "reason": "补货"
+        }
+      },
+      "note": "已知缺陷：第二个动作会被静默丢弃，本用例只判第一个"
+    },
+    {
+      "id": "cl-06",
+      "category": "clarify",
+      "split": "dev",
+      "message": "给商品 7 建个活动，199 块，50 件，2026-12-01 上午十点开始，到十点结束",
+      "expect": {
+        "tool": null,
+        "reply_contains": [
+          "时间"
+        ]
+      }
+    },
+    {
+      "id": "hs-01",
+      "category": "tool_selection",
+      "split": "holdout",
+      "message": "有哪些秒杀正在进行",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events",
+        "args": {
+          "status": "running"
+        }
+      }
+    },
+    {
+      "id": "hs-02",
+      "category": "tool_selection",
+      "split": "holdout",
+      "message": "最近有什么活动可以看",
+      "expect": {
+        "intent": "query_events",
+        "tool": "query_seckill_events"
+      }
+    },
+    {
+      "id": "hsl-01",
+      "category": "slot_extraction",
+      "split": "holdout",
+      "message": "给商品 2 建个活动，三百块，20 件，2026-12-05 09:00 到 2026-12-05 11:00",
+      "expect": {
+        "intent": "create_event",
+        "tool": "create_seckill_event",
+        "args": {
+          "productId": 2,
+          "seckillPrice": 300.0,
+          "stock": 20,
+          "startTime": "2026-12-05T09:00:00",
+          "endTime": "2026-12-05T11:00:00"
+        }
+      }
+    },
+    {
+      "id": "hc-01",
+      "category": "clarify",
+      "split": "holdout",
+      "message": "商品 7 建个活动，50 件，2026-12-01 上午十点到十二点",
+      "expect": {
+        "intent": "create_event",
+        "tool": null,
+        "reply_contains": [
+          "秒杀价"
+        ]
+      }
+    },
+    {
+      "id": "hc-02",
+      "category": "tool_selection",
+      "split": "holdout",
+      "message": "第一个卖得怎么样",
+      "history": [
+        {
+          "role": "user",
+          "text": "查一下进行中的活动"
+        },
+        {
+          "role": "assistant",
+          "text": "共 5 个活动（第 1/1 页，最多展示 10 条）：1. 活动 32 · 商品 2 · ¥39.90 · running"
+        }
+      ],
+      "expect": {
+        "intent": "query_stats",
+        "tool": "get_seckill_stats",
+        "args": {
+          "eventId": 32
+        }
+      },
+      "note": "原判为 clarify，属期望写错（oracle 错误）；指代解析正确，已改成断言 eventId=32"
+    }
+  ]
+}

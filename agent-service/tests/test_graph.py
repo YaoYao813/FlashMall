@@ -12,7 +12,7 @@ import app.graph.nodes.read as read_mod
 import app.graph.nodes.router as router_mod
 import app.graph.nodes.write as write_mod
 from app.graph.builder import build_graph
-from app.graph.schemas import RouterDecision
+from app.graph.schemas import RouterDecision, validate_slots
 
 
 class FakeToolbox:
@@ -258,6 +258,8 @@ async def test_router_falls_back_when_model_says_unknown(monkeypatch):
     assert update["intent"] == "query_events"
     assert update["tool_name"] == "query_seckill_events"
     assert update["tool_args"] == {"status": "running"}
+    # 评测要区分「模型判对」与「兜底救回来」，来源必须如实记下来
+    assert update["router_source"] == "keyword"
 
 
 async def test_router_survives_classifier_exception(monkeypatch):
@@ -269,3 +271,79 @@ async def test_router_survives_classifier_exception(monkeypatch):
 
     assert update["intent"] == "diagnose"
     assert update["tool_name"] == "diagnose_stock"
+    assert update["router_source"] == "keyword"
+
+
+@pytest.mark.parametrize(
+    ("intent", "slots", "should_pass"),
+    [
+        ("create_event", {"seckillPrice": 0, "stock": 10}, False),
+        ("create_event", {"seckillPrice": 9.9, "stock": 0}, False),
+        (
+            "create_event",
+            {"startTime": "2026-12-01T10:00:00", "endTime": "2026-12-01T10:00:00"},
+            False,
+        ),
+        (
+            "create_event",
+            {"startTime": "2026-12-01T10:00:00", "endTime": "2026-12-01T12:00:00"},
+            True,
+        ),
+        ("adjust_stock", {"delta": 0}, False),
+        ("adjust_stock", {"delta": -5}, True),
+        # 解析不了的字符串不在这里判，交给 Java
+        ("create_event", {"startTime": "明早"}, True),
+    ],
+)
+def test_validate_slots(intent, slots, should_pass):
+    assert (validate_slots(intent, slots) == []) is should_pass
+
+
+async def test_zero_length_window_asks_instead_of_showing_card(wire):
+    """槽位齐全但时间不合法时不能弹确认卡片——用户批了也会被 Java 拒。"""
+    graph, toolbox = wire(
+        RouterDecision(
+            intent="create_event",
+            slots={
+                "productId": 7,
+                "seckillPrice": 199,
+                "stock": 50,
+                "startTime": "2026-12-01T10:00:00",
+                "endTime": "2026-12-01T10:00:00",
+            },
+        ),
+        {},
+    )
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage("建个活动，十点开始，十点结束")]},
+        {"configurable": {"thread_id": "t-invalid-window"}},
+    )
+
+    assert "__interrupt__" not in result
+    assert "结束时间必须晚于开始时间" in result["reply"]
+    assert toolbox.calls == []
+
+
+async def test_router_marks_llm_source_when_model_answers(monkeypatch):
+    async def fake_classify(prompt):
+        return RouterDecision(intent="query_events", slots={"status": "ended"})
+
+    monkeypatch.setattr(router_mod, "_classify", fake_classify)
+    update = await router_mod.router_node(
+        {"messages": [HumanMessage("看看已结束的活动")]}, {}
+    )
+
+    assert update["intent"] == "query_events"
+    assert update["tool_args"] == {"status": "ended"}
+    assert update["router_source"] == "llm"
+
+
+async def test_router_marks_unknown_when_nothing_matches(monkeypatch):
+    async def fake_classify(prompt):
+        return RouterDecision(intent="unknown", slots={})
+
+    monkeypatch.setattr(router_mod, "_classify", fake_classify)
+    update = await router_mod.router_node({"messages": [HumanMessage("今天天气怎么样")]}, {})
+
+    assert update["intent"] == "unknown"
+    assert update["router_source"] == "unknown"
