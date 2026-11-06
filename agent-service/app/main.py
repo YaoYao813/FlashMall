@@ -83,6 +83,9 @@ def _trace(node: str, tool: str, result: dict) -> dict:
         "ok": bool(result.get("ok")),
         "replayed": data.get("replayed"),
         "message": error.get("message"),
+        # 活动列表额外带结构化条目，前端渲染成表格；不解析渲染好的中文（改一个字就静默失效）
+        "items": data.get("items") if isinstance(data.get("items"), list) else None,
+        "total": data.get("total"),
     }
 
 

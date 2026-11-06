@@ -12,7 +12,9 @@
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
          background: var(--bg); color: var(--text); }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 96px; }
+  /* 底部留出输入区的实际高度：徽标出现时输入区变高，固定值会盖住最后一张卡片 */
+  .wrap { max-width: 860px; margin: 0 auto;
+          padding: 24px 16px calc(var(--composer-h, 96px) + 20px); }
   h1 { font-size: 18px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
   .stream { display: flex; flex-direction: column; gap: 12px; }
@@ -43,15 +45,53 @@
                     font: inherit; }
   .composer button { padding: 10px 18px; }
   .hint { max-width: 860px; margin: 6px auto 0; color: var(--muted); font-size: 12px; }
+  .events { align-self: stretch; max-width: 100%; background: var(--panel);
+            border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+            overflow-x: auto; }
+  .events-head { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .events table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .events th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px;
+               border-bottom: 1px solid var(--line); padding: 4px 10px 6px 0; white-space: nowrap; }
+  .events td { padding: 6px 10px 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  .events tr:last-child td { border-bottom: 0; }
+  .events td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .events .pid { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .events .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+          white-space: nowrap; }
+  .chip.running { background: #dcfce7; color: #15803d; }
+  .chip.pending { background: #e0e7ff; color: #3730a3; }
+  .chip.ended { background: #f3f4f6; color: var(--muted); }
+  .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 12px;
+           padding: 16px; color: var(--muted); }
+  .empty-title { font-size: 13px; margin-bottom: 10px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; }
+  .example { border-radius: 999px; font-size: 13px; color: var(--accent);
+             border-color: #bfdbfe; background: #eff6ff; }
+  .example:hover { background: #dbeafe; }
+  .empty-note { margin-top: 10px; font-size: 12px; }
+  .badge { max-width: 860px; margin: 0 auto 8px; width: fit-content; font-size: 12px;
+           color: #b45309; background: #fef3c7; border: 1px solid #fde68a;
+           border-radius: 999px; padding: 3px 10px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>FlashMall 秒杀运营助手</h1>
   <div class="sub">查活动 · 看数据 · 诊断库存 · 建活动 / 调库存（写操作需确认）</div>
+  <div id="empty" class="empty">
+    <div class="empty-title">试试这样问：</div>
+    <div class="examples">
+      <button class="example" type="button" data-q="现在有哪些进行中的活动">现在有哪些进行中的活动</button>
+      <button class="example" type="button" data-q="活动 8 卖得怎么样">活动 8 卖得怎么样</button>
+      <button class="example" type="button" data-q="活动 8 加 5 件库存，理由：演示">活动 8 加 5 件库存</button>
+    </div>
+    <div class="empty-note">最后一个会先弹确认卡片、批准后才改库存；拒绝则什么都不发生。</div>
+  </div>
   <div id="stream" class="stream"></div>
 </div>
 <div class="composer">
+  <div id="badge" class="badge" hidden>有 1 个操作等待你确认</div>
   <form id="form">
     <input id="input" autocomplete="off" placeholder="例如：有哪些进行中的活动" required>
     <button class="primary" type="submit" id="send">发送</button>
@@ -67,8 +107,78 @@ const THREAD_KEY = 'flashmall.thread_id';
 
 let threadId = localStorage.getItem(THREAD_KEY) || null;
 let busy = false;
+// 本轮 query_seckill_events 的结构化结果：message 到达时按它渲染表格，用不到就丢弃
+let listPayload = null;
+
+const emptyEl = document.getElementById('empty');
+const badgeEl = document.getElementById('badge');
+const STATUS = {
+  running: ['进行中', 'running'],
+  pending: ['未开始', 'pending'],
+  ended: ['已结束', 'ended'],
+};
+
+function hideEmpty() {
+  emptyEl.hidden = true;
+}
+
+function setPending(on) {
+  badgeEl.hidden = !on;
+  // 徽标一出现输入区就变高，必须立刻重算底部留白，否则会盖住卡片最后一行
+  syncComposerSpace();
+  requestAnimationFrame(stickToBottom);
+}
+
+function fmtTime(value) {
+  return String(value || '').replace('T', ' ').slice(0, 16);
+}
+
+function fmtMoney(value) {
+  return value === null || value === undefined ? '—' : '¥' + Number(value).toFixed(2);
+}
+
+function statusChip(status) {
+  const [label, cls] = STATUS[status] || [status || '未知', 'ended'];
+  return `<span class="chip ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function renderEventsCard(trace) {
+  const items = trace.items || [];
+  const total = trace.total === null || trace.total === undefined ? items.length : trace.total;
+  const head = total > items.length
+    ? `共 ${total} 个活动，展示前 ${items.length} 个`
+    : `共 ${total} 个活动`;
+  const rows = items.map((item) => `<tr>
+      <td>${escapeHtml(String(item.id ?? ''))}</td>
+      <td>${escapeHtml(String(item.productName || '未命名商品'))}
+        <span class="pid">#${escapeHtml(String(item.productId ?? ''))}</span></td>
+      <td class="num">${fmtMoney(item.seckillPrice)}</td>
+      <td class="num">${escapeHtml(String(item.stock ?? ''))}</td>
+      <td class="time">${fmtTime(item.startTime)}<br>${fmtTime(item.endTime)}</td>
+      <td>${statusChip(item.status)}</td>
+    </tr>`).join('');
+
+  const el = document.createElement('div');
+  el.className = 'events';
+  el.innerHTML = `<div class="events-head">${escapeHtml(head)}</div>
+    <table>
+      <thead><tr><th>活动</th><th>商品</th><th>秒杀价</th><th>库存</th><th>时间窗</th><th>状态</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  hideEmpty();
+  streamEl.appendChild(el);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+document.querySelectorAll('#empty .example').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    input.value = btn.dataset.q;
+    form.requestSubmit();
+  });
+});
 
 function addMessage(role, text) {
+  hideEmpty();
   const el = document.createElement('div');
   el.className = 'msg ' + role;
   el.textContent = text;
@@ -78,6 +188,8 @@ function addMessage(role, text) {
 }
 
 function addTrace(trace) {
+  hideEmpty();
+  if (Array.isArray(trace.items)) listPayload = trace;
   let box = streamEl.querySelector('.traces:last-of-type');
   if (!box) {
     box = document.createElement('div');
@@ -97,6 +209,8 @@ function clearTraces() {
 }
 
 function renderCard(card) {
+  hideEmpty();
+  setPending(true);
   const el = document.createElement('div');
   el.className = 'card';
   const rows = (card.fields || []).map(
@@ -138,7 +252,12 @@ function dispatch(event, data) {
   } else if (event === 'interrupt') {
     renderCard(data);
   } else if (event === 'message') {
-    addMessage('assistant', data.text);
+    if (listPayload && listPayload.items.length) {
+      renderEventsCard(listPayload);
+    } else {
+      addMessage('assistant', data.text);
+    }
+    listPayload = null;
   } else if (event === 'error') {
     addMessage('assistant', '出错了：' + data.message);
   }
@@ -191,6 +310,7 @@ form.addEventListener('submit', (e) => {
     input.value = '';
     addMessage('user', text);
     clearTraces();
+    listPayload = null;
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -209,10 +329,13 @@ function resume(approved) {
     });
     if (response.status === 409) {
       addMessage('assistant', '这个操作已经处理过了，没有待确认的内容。');
+      setPending(false);
       return;
     }
     clearTraces();
+    listPayload = null;
     await readSSE(response);
+    setPending(false);
   });
 }
 
@@ -223,9 +346,31 @@ async function restore() {
     if (!response.ok) return;
     const data = await response.json();
     for (const message of data.messages || []) addMessage(message.role, message.text);
+    if (streamEl.children.length === 0) emptyEl.hidden = false;
     if (data.pending) renderCard(data.pending);
   } catch (_) { /* 后端没起也不阻塞页面 */ }
 }
+
+// 输入区是 fixed 的，高度随徽标出现而变化；把它的真实高度写进 CSS 变量，
+// 页面底部才永远留够空间，最后一张卡片不会被盖住
+const composerEl = document.querySelector('.composer');
+
+function syncComposerSpace() {
+  document.documentElement.style.setProperty('--composer-h', composerEl.offsetHeight + 'px');
+}
+
+function stickToBottom() {
+  // 只在用户本来就在底部时跟随，不打断往上翻历史的阅读
+  if (window.scrollY + window.innerHeight >= document.body.scrollHeight - 80) {
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+}
+
+// ResizeObserver 在个别渲染路径（无头/虚拟时间）里不一定及时触发，
+// 所以 setPending 里还会显式调一次；这里留着兜底窗口缩放与字体变化
+new ResizeObserver(syncComposerSpace).observe(composerEl);
+window.addEventListener('resize', () => { syncComposerSpace(); stickToBottom(); });
+syncComposerSpace();
 
 restore();
 </script>
