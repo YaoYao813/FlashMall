@@ -27,6 +27,9 @@ public class SeckillEvent implements Serializable {
     // 活动库存数（秒杀核心库存，存入Redis）
     private Integer stock;
 
+    // 预热那一刻的仓库库存（D0）。对账要拿它判定仓库侧消耗，历史活动为 null
+    private Integer warehouseBaseline;
+
     // 秒杀开始时间
     private LocalDateTime startTime;
 

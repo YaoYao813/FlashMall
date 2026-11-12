@@ -25,16 +25,48 @@ public class RabbitMQConfig {
     // ========== 秒杀路由键 ==========
     public static final String SECKILL_ORDER_ROUTING_KEY = "seckill.order.create";
 
+    // ========== 库存回滚队列 ==========
+    public static final String SECKILL_STOCK_ROLLBACK_QUEUE = "seckill.stock.rollback.queue";
+
+    // ========== 死信交换机 / 死信队列 / 死信路由键 ==========
+    public static final String SECKILL_DLX = "seckill.dlx";
+    public static final String SECKILL_ORDER_DLQ = "seckill.order.dlq";
+    public static final String SECKILL_ORDER_DEAD_ROUTING_KEY = "seckill.order.dead";
+
     // 秒杀交换机
     @Bean
     public DirectExchange seckillExchange() {
         return new DirectExchange(SECKILL_EXCHANGE, true, false);
     }
 
-    // 秒杀队列
+    // 死信交换机：主队列消费失败（basicNack requeue=false）时消息落到这里
+    @Bean
+    public DirectExchange seckillDlx() {
+        return new DirectExchange(SECKILL_DLX, true, false);
+    }
+
+    // 秒杀队列。带上死信参数：消息被 basicNack(requeue=false) 后会进 seckill.order.dlq，
+    // 不再像以前那样直接丢弃。注意队列参数不可变更，改这里必须删掉旧队列再重启。
     @Bean
     public Queue seckillOrderQueue() {
-        return new Queue(SECKILL_ORDER_QUEUE, true, false, false);
+        return QueueBuilder.durable(SECKILL_ORDER_QUEUE)
+                .withArgument("x-dead-letter-exchange", SECKILL_DLX)
+                .withArgument("x-dead-letter-routing-key", SECKILL_ORDER_DEAD_ROUTING_KEY)
+                .build();
+    }
+
+    // 死信队列：不配消费者，只做落盘等人工排查/重放
+    @Bean
+    public Queue seckillOrderDlq() {
+        return QueueBuilder.durable(SECKILL_ORDER_DLQ).build();
+    }
+
+    @Bean
+    public Binding bindingSeckillOrderDlq() {
+        return BindingBuilder
+                .bind(seckillOrderDlq())
+                .to(seckillDlx())
+                .with(SECKILL_ORDER_DEAD_ROUTING_KEY);
     }
 
     // 建立队列和交换机之间的绑定关系，指定路由规则
@@ -73,7 +105,7 @@ public class RabbitMQConfig {
 
     @Bean
     public Queue stockRollbackQueue() {
-        return new Queue("seckill.stock.rollback.queue", true);
+        return new Queue(SECKILL_STOCK_ROLLBACK_QUEUE, true);
     }
 
     @Bean

@@ -8,9 +8,12 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.mybatis.spring.annotation.MapperScan;
 
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(scanBasePackages = {"com.example.flashmall", "com.example.seckillservice"})
 @EnableDiscoveryClient
+// 库存对账的定时扫描（StockReconcileServiceImpl.sweep）靠它生效
+@EnableScheduling
 @MapperScan("com.example.flashmall.common.mapper")
 public class SeckillServiceApplication implements CommandLineRunner {
 

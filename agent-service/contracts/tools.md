@@ -197,6 +197,57 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 
 ---
 
+### 1.7 `GET /api/admin/seckill/reconcile` — 库存对账
+
+`GET /api/admin/seckill/reconcile?eventId=9`；`GET /api/admin/seckill/reconcile/all`
+返回「尚未结束或结束 30 分钟内」的全部活动。
+
+```json
+{
+  "eventId": 9,
+  "productId": 7,
+  "status": "running",
+  "verdict": "OK",
+  "backlog": 0,
+  "quota": {
+    "total": 50, "redisStock": 38, "orderCount": 12, "cancelledCount": 0,
+    "expectedRedis": 38, "gap": 0, "verdict": "OK"
+  },
+  "warehouse": {
+    "baseline": 50, "dbStock": 38, "expectedDb": 38, "gap": 0, "verdict": "OK"
+  }
+}
+```
+
+口径：
+
+- 两条不变量，都含净消耗 `O - X`：
+
+  ```
+  配额侧：Q - R  = O - X + 在途
+  仓库侧：D0 - D = O - X + 在途
+  ```
+
+  `Q=event.stock`，`R=redisStock`，`D0=event.warehouse_baseline`（预热时写入），
+  `D=product_stock.stock`，`O=活动窗口内订单数`，`X=其中 status ∈ (4,5) 的数量`
+- `gap = 应有消耗 - 实际消耗`。判定：`0 → OK`；`<0 → DRIFT`（正常链路产生不了负数）；
+  `0 < gap <= backlog → PENDING`（队列里还有没消费完的消息）；`gap > backlog → DRIFT`
+- `backlog = seckill.order.queue` + `seckill.stock.rollback.queue` 的 **ready** 消息数。
+  不含已投递未 ack 的那一批，因此瞬时可能出现假 DRIFT
+- `verdict` 取值：`OK` / `PENDING` / `DRIFT` / `UNKNOWN` / `STALE`。合并规则：任一侧 DRIFT 即 DRIFT；
+  否则任一侧 UNKNOWN 即 UNKNOWN；否则任一侧 PENDING 即 PENDING
+- `STALE`：同一商品已经存在更新的场次。Redis 库存键和 `product_stock` 都是**按商品**维护的，
+  被后来的活动预热/卖出改写过，旧场次的两侧读数不再可比。此时两侧 verdict 也是 `STALE`，
+  数字照常返回但仅供参考；`/reconcile/all` 不返回 STALE 的场次，定时扫描也不告警
+- `UNKNOWN`：Redis 不可达（`quota`）或 `warehouse_baseline` 为空（历史活动，`warehouse`）。
+  未知一律为 `null`，不用 `0` 冒充
+- **只读**。没有「一键修复」接口：偏差分不清「Redis 多扣」和「订单还没落库」，
+  自动补库存会把一次延迟变成一次真的超卖
+- 服务内每 60 秒扫一次（`seckill.reconcile.interval-ms`），连续两次 DRIFT 才打
+  `reconcile.mismatch` ERROR，只打 `reconcile.suspect` WARN
+
+---
+
 ## 2. MCP 工具
 
 返回统一为 `{"ok":true,"data":...}` 或 `{"ok":false,"error":{"code":"...","message":"..."}}`，

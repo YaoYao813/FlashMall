@@ -26,4 +26,15 @@ public class Result<T> {
     public static <T> Result<T> fail(String message) {
         return new Result<>(500, message, null);
     }
+
+    /**
+     * 失败响应（自定义错误码）。
+     *
+     * <p>约定 500 = 业务失败（请求本身没问题，但不该这么干，比如重复支付）；
+     * 202 = 暂时不可判定，可以原样重试（比如秒杀订单还在 MQ 里没落库）。
+     * 202 单独存在是为了让客户端能区分「别重试了」和「等一会儿再试」。
+     */
+    public static <T> Result<T> fail(Integer code, String message) {
+        return new Result<>(code, message, null);
+    }
 }

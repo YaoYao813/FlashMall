@@ -52,9 +52,27 @@ Docker 服务通过 `DB_HOST=mysql` 连容器；本地 `mvn spring-boot:run` 跑
 - `seckill_event.stock` 是活动**总配额**，消费者扣的是 `product_stock.stock`；两者初值可能不一致（商品 7 是 30/50），不影响防超卖
 - 身份靠网关透传 `X-User-Id`，业务服务不鉴权；直连 8080–8083 可伪造身份
 - 只有创建活动有幂等键；`PUT /{id}` 与 `POST /{id}/stock-sync` 无幂等键
-- `processBatchOrders` 被同类方法自调用，`@Transactional` 不生效
-- 消费者 `nack requeue=false` 且无死信队列，业务异常会丢消息
-- 库存回滚不幂等，`stock + 1` 无上限，并发取消会双回滚
+- `processBatchOrders` 已拆到独立 Bean `SeckillOrderBatchService`（2026-11-12），`@Transactional` 真正生效
+- 消费者 `nack requeue=false` 会进 `seckill.order.dlq`；死信**只手动重放**
+  （`POST /api/admin/seckill/dlq/replay`），不做自动重放
+- `seckill.order.queue` 带死信参数，**队列参数不可变更**：改 `RabbitMQConfig` 里的
+  `x-dead-letter-*` 必须先 `rabbitmqctl delete_queue seckill.order.queue` 再重启，否则 `PRECONDITION_FAILED`
+- 库存对账（`GET /api/admin/seckill/reconcile`）只读、不自动修；`在途` 只统计队列 ready 消息，
+  不含已投递未 ack 的那批，高峰时可能瞬时出现假 `DRIFT`，告警要求连续两次才升级
+- 对账的 `STALE` 只覆盖「同商品有更新的场次」；若后续测试/手工操作改过同一商品的
+  Redis 或 `product_stock`（而该活动本身是最新场次），它会一直报 `DRIFT`——不是代码回归
+- `seckill_event.warehouse_baseline` 由预热写入；对账上线前的老活动该列为 NULL，仓库侧返回 `UNKNOWN`
+- 库存回滚幂等靠 `stock_rollback_log`（主键 `order_id`，2026-11-12）。**回滚消息必须带
+  `orderId`**；老格式（只有 `productId + userId`）会被打 ERROR 后丢弃——宁可少退不可多退
+- 回滚执行顺序固定 **先 DB 后 Redis**：DB 退成功、Redis 失败只会「少卖」，差异靠对账发现；
+  此时消息 **ack 而不是重投**（Redis 回滚无幂等保护，重投可能多 +1）
+- `seckill.stock.rollback.queue` **没有 DLX**，回滚消费者只在 DB 故障时 `requeue=true`
+- 订单状态变更一律 CAS（`OrderMapper.casPay` / `casTerminate`，`WHERE status=0`），不要退回 `updateById`
+- 取消接口幂等：订单已是「已取消」时再次调用会补发回滚消息并返回成功（消费端按 `orderId` 去重）
+- 支付接口查不到订单但订单号前 14 位是 10 分钟内的时间戳 → `body.code=202`（可重试），
+  其余仍是 500。注意 **JDK 8 的 `DateTimeFormatter` 解析 `yyyyMMddHHmmssSSS` 紧邻小数域会抛异常**，
+  同样的串在 JDK 17 上能解析，别改回 17 位
+- 普通订单 `OrderServiceImpl.createOrder` 是死代码，且取消时会错误地给 `product_stock` 加库存；接上前先修
 - `user.role` 字段存在但未使用，没有授权体系
 - 商品详情存在双层缓存与双层加锁，冷缓存时内层可能自旋超时返回 null
 

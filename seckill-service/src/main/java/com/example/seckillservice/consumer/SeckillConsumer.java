@@ -1,159 +1,119 @@
 package com.example.seckillservice.consumer;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.flashmall.common.entity.Order;
-import com.example.flashmall.common.entity.Product;
-import com.example.flashmall.common.entity.ProductStock;
 import com.example.flashmall.common.entity.SeckillMessage;
-import com.example.flashmall.common.mapper.OrderMapper;
-import com.example.flashmall.common.mapper.ProductMapper;
-import com.example.flashmall.common.mapper.ProductStockMapper;
 import com.example.seckillservice.config.RabbitMQConfig;
 import com.example.seckillservice.script.SeckillRedisScript;
+import com.example.seckillservice.service.SeckillOrderBatchService;
 import com.rabbitmq.client.Channel;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.AmqpHeaders;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+/**
+ * 秒杀订单消费者。
+ *
+ * <p>三条可靠性约定：
+ * <ol>
+ *   <li>落库逻辑在 {@link SeckillOrderBatchService} 里，单独 Bean 才能让 @Transactional 生效；</li>
+ *   <li>某个商品分组失败时，只回补**这一组**的 Redis，不碰已经提交成功的其他商品；</li>
+ *   <li>失败的消息 {@code basicNack(requeue=false)} 进死信队列 {@code seckill.order.dlq}，
+ *       不再直接丢弃；重放时由 order_no 幂等过滤兜底。</li>
+ * </ol>
+ */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class SeckillConsumer {
-    @Autowired
-    private ProductStockMapper productStockMapper;
-    @Autowired
-    private OrderMapper orderMapper;
-    @Autowired
-    private ProductMapper productMapper;
-    @Autowired
-    private SeckillRedisScript seckillRedisScript;
-    @Autowired
-    private RedissonClient redissonClient;
-    @Autowired
-    private RabbitTemplate rabbitTemplate;
 
-    /**
-     * 批量监听秒杀订单队列，按 productId 分组后批量落库
-     */
+    private static final String LOCK_PREFIX = "lock:seckill:product:";
+    private static final long LOCK_WAIT_SECONDS = 5;
+    private static final long LOCK_LEASE_SECONDS = 30;
+
+    private final SeckillOrderBatchService seckillOrderBatchService;
+    private final SeckillRedisScript seckillRedisScript;
+    private final RedissonClient redissonClient;
+
     @RabbitListener(queues = RabbitMQConfig.SECKILL_ORDER_QUEUE)
     public void handleSeckillOrder(List<SeckillMessage> messages, Channel channel,
-                                   @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) {
+                                   @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
+        if (messages == null || messages.isEmpty()) {
+            channel.basicAck(deliveryTag, true);
+            return;
+        }
         log.info("收到批量秒杀消息，数量={}", messages.size());
 
-        // 按 productId 分组
         Map<Long, List<SeckillMessage>> grouped = messages.stream()
                 .collect(Collectors.groupingBy(SeckillMessage::getProductId));
 
-        try {
-            for (Map.Entry<Long, List<SeckillMessage>> entry : grouped.entrySet()) {
-                Long productId = entry.getKey();
-                List<SeckillMessage> batch = entry.getValue();
+        List<Long> failedProductIds = new ArrayList<>();
 
-                String lockKey = "lock:seckill:product:" + productId;
-                RLock lock = redissonClient.getLock(lockKey);
-                if (lock.tryLock(5, 30, TimeUnit.SECONDS)) {
-                    try {
-                        processBatchOrders(productId, batch);
-                    } finally {
-                        lock.unlock();
-                    }
-                } else {
-                    log.warn("批量处理获取分布式锁超时：productId={}", productId);
-                    // 锁获取失败，整批重新入队
+        for (Map.Entry<Long, List<SeckillMessage>> entry : grouped.entrySet()) {
+            Long productId = entry.getKey();
+            List<SeckillMessage> batch = entry.getValue();
+            RLock lock = redissonClient.getLock(LOCK_PREFIX + productId);
+            boolean locked = false;
+            try {
+                locked = lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS);
+                if (!locked) {
+                    // 锁竞争失败：把整条投递重新入队。重投的消息由 order_no 幂等过滤挡住，
+                    // 已成功落库的部分不会被重复扣减。
+                    log.warn("批量处理获取分布式锁超时，重新入队：productId={}", productId);
                     channel.basicNack(deliveryTag, true, true);
                     return;
                 }
-            }
-            // 全部成功 → 批量确认
-            channel.basicAck(deliveryTag, true);
-            log.info("批量秒杀订单处理成功，数量={}", messages.size());
-        } catch (Exception e) {
-            log.error("批量处理秒杀订单异常，数量={}", messages.size(), e);
-            // 回滚所有消息的 Redis 状态
-            for (SeckillMessage msg : messages) {
-                try {
-                    seckillRedisScript.rollbackStock(msg.getProductId(), msg.getUserId());
-                } catch (Exception ex) {
-                    log.error("回滚Redis失败：userId={}, productId={}", msg.getUserId(), msg.getProductId(), ex);
+                seckillOrderBatchService.processBatchOrders(productId, batch);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                channel.basicNack(deliveryTag, true, true);
+                return;
+            } catch (Exception e) {
+                // 只回补这一组：事务已回滚，这些消息对应的订单没有落库
+                log.error("商品批次处理失败：productId={}, count={}", productId, batch.size(), e);
+                failedProductIds.add(productId);
+                rollbackGroup(batch);
+            } finally {
+                if (locked && lock.isHeldByCurrentThread()) {
+                    lock.unlock();
                 }
             }
-            try {
-                channel.basicNack(deliveryTag, true, false);
-            } catch (IOException ex) {
-                log.error("消息确认失败", ex);
-            }
         }
+
+        if (!failedProductIds.isEmpty()) {
+            // 一次投递只有一个 deliveryTag，无法部分 ack；
+            // 整条投递进死信队列，已成功的分组重放时会被幂等过滤跳过。
+            log.error("秒杀订单批次部分失败，转入死信队列：failedProductIds={}, total={}",
+                    failedProductIds, messages.size());
+            channel.basicNack(deliveryTag, true, false);
+            return;
+        }
+
+        channel.basicAck(deliveryTag, true);
+        log.info("批量秒杀订单处理成功，数量={}", messages.size());
     }
 
     /**
-     * 同一商品的批量落库：一次查库存 → 一次扣库存 → 批量插订单
+     * 回补 Redis。DB 事务已回滚，所以这一组的订单一定没有落库。
      */
-    @Transactional(rollbackFor = Exception.class)
-    public void processBatchOrders(Long productId, List<SeckillMessage> batch) {
-        int count = batch.size();
-
-        // 1. 查询 MySQL 库存
-        LambdaQueryWrapper<ProductStock> query = new LambdaQueryWrapper<ProductStock>()
-                .eq(ProductStock::getProductId, productId);
-        ProductStock stock = productStockMapper.selectOne(query);
-        if (stock == null || stock.getStock() < count) {
-            throw new RuntimeException("MySQL库存不足，productId=" + productId + ", need=" + count);
-        }
-
-        // 2. 乐观锁批量扣减库存（一次 UPDATE）
-        int affected = productStockMapper.decrementStock(productId, count, stock.getVersion());
-        if (affected == 0) {
-            throw new RuntimeException("乐观锁冲突，productId=" + productId);
-        }
-
-        // 3. 查询商品真实信息
-        Product product = productMapper.selectById(productId);
-        String productName = product != null ? product.getTitle() : "秒杀商品-" + productId;
-        BigDecimal price = product != null ? product.getPrice() : BigDecimal.ZERO;
-
-        // 4. 批量创建订单（一条 INSERT SQL）
-        List<Order> orders = new ArrayList<>(count);
+    private void rollbackGroup(List<SeckillMessage> batch) {
         for (SeckillMessage msg : batch) {
-            Order order = new Order();
-            order.setOrderNo(msg.getOrderNo());
-            order.setUserId(msg.getUserId());
-            order.setProductId(msg.getProductId());
-            order.setProductName(productName);
-            order.setPrice(price);
-            order.setQuantity(1);
-            order.setTotalAmount(price);
-            order.setStatus(0);
-            orders.add(order);
+            try {
+                seckillRedisScript.rollbackStock(msg.getProductId(), msg.getUserId());
+            } catch (Exception ex) {
+                log.error("回滚Redis失败：userId={}, productId={}",
+                        msg.getUserId(), msg.getProductId(), ex);
+            }
         }
-        orderMapper.insertBatch(orders);
-
-        // 5. 发送延迟取消消息（15分钟后未支付自动取消，回滚库存）
-        for (Order order : orders) {
-            rabbitTemplate.convertAndSend(
-                    "order.delay.exchange",
-                    "order.cancel",
-                    order.getId(),
-                    message -> {
-                        message.getMessageProperties().setDelay(15 * 60 * 1000);
-                        return message;
-                    }
-            );
-        }
-        log.info("已发送延迟取消消息，数量={}, orderNos={}",
-                orders.size(), orders.stream().map(Order::getOrderNo).collect(Collectors.toList()));
     }
 }
