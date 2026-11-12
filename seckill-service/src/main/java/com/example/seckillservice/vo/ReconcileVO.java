@@ -36,6 +36,20 @@ public class ReconcileVO {
     /** OK / PENDING / DRIFT / UNKNOWN / STALE */
     private String verdict;
 
+    /**
+     * DRIFT 的可能成因指纹，非 DRIFT 一律 {@code NONE}：
+     * <pre>
+     *   DUPLICATE_ROLLBACK        两侧 gap 都 &lt; 0：同一回滚消息执行了两次（多退）
+     *   REDIS_OVER_ROLLBACK       仅配额侧 gap &lt; 0：Redis 多退了
+     *   WAREHOUSE_OVER_ROLLBACK   仅仓库侧 gap &lt; 0：product_stock 多退了
+     *   ROLLBACK_MISSED           至少一侧 gap &gt; 0：退单没归还库存，或库存扣了订单没落库（少退）
+     *   MIXED_SIGN                两侧方向相反：不是一个原因，需人工判断
+     *   NONE                      非 DRIFT
+     * </pre>
+     * 只是「可能成因」，不是定论——对账只读，不据此自动修复。
+     */
+    private String fingerprint;
+
     /** 在途容差 = 主队列 + 回滚队列当前 ready 消息数 */
     private Integer backlog;
 

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 RETRY_DELAYS = (0.2, 0.5)
 LOGIN_PATH = "/api/auth/login"
 EVENTS_PATH = "/api/admin/seckill/events"
+RECONCILE_PATH = "/api/admin/seckill/reconcile"
 
 
 class FlashMallClient:
@@ -180,6 +181,14 @@ class FlashMallClient:
 
     async def get_stats(self, event_id: int) -> dict:
         return await self._request("GET", f"{EVENTS_PATH}/{event_id}/stats", retries=2)
+
+    async def reconcile(self, event_id: int) -> dict:
+        return await self._request(
+            "GET", RECONCILE_PATH, params={"eventId": event_id}, retries=2
+        )
+
+    async def reconcile_all(self) -> list:
+        return await self._request("GET", f"{RECONCILE_PATH}/all", retries=2)
 
     async def create_event(self, payload: dict, idempotency_key: str) -> dict:
         return await self._request(

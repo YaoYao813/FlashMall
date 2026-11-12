@@ -44,6 +44,8 @@ public class EventStatsServiceImpl implements EventStatsService {
             Collections.unmodifiableList(Arrays.asList(1, 2, 3));
     private static final List<Integer> PENDING_PAY_STATUS =
             Collections.singletonList(0);
+    private static final List<Integer> CANCELLED_STATUSES =
+            Collections.unmodifiableList(Arrays.asList(4, 5));
 
     private static final int RATE_SCALE = 4;
     private static final int GMV_SCALE = 2;
@@ -66,6 +68,7 @@ public class EventStatsServiceImpl implements EventStatsService {
         int orderCount = countOrders(event, null);
         int paidCount = countOrders(event, PAID_STATUSES);
         int ordersOutstanding = countOrders(event, PENDING_PAY_STATUS);
+        int cancelledCount = countOrders(event, CANCELLED_STATUSES);
 
         BigDecimal gmv = event.getSeckillPrice() == null
                 ? BigDecimal.ZERO.setScale(GMV_SCALE)
@@ -85,6 +88,7 @@ public class EventStatsServiceImpl implements EventStatsService {
                 .stats(EventStatsVO.Stats.builder()
                         .orderCount(orderCount)
                         .paidCount(paidCount)
+                        .cancelledCount(cancelledCount)
                         .gmv(gmv)
                         .payRate(ratio(paidCount, orderCount))
                         .stockTotal(stockTotal)

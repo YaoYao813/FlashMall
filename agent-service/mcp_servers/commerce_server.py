@@ -99,6 +99,9 @@ def _stats_conclusion(event: dict, stats: dict, stock: dict) -> str:
         parts.append(f"已售 {consumed}/{total}")
     if redis is not None:
         parts.append(f"当前剩余 {redis} 件")
+    cancelled = stats.get("cancelledCount")
+    if cancelled:
+        parts.append(f"取消/超时 {cancelled} 单")
     parts.append(f"支付率 {_percent(stats.get('payRate'))}")
     parts.append(f"GMV {_money(stats.get('gmv'))}")
     event_id = event.get("id")
@@ -135,44 +138,76 @@ async def get_seckill_stats(
     )
 
 
-def _diagnose_one(event: dict, stats: dict, stock: dict) -> dict | None:
-    """返回可疑记录；库存正常返回 None。
+# 指纹 → 人话。指纹由 Java 对账服务按两侧 gap 的符号算出来（契约 §1.7），
+# Agent 只做翻译，不自己重新判定，避免两端口径漂移。
+_FINGERPRINT_HINTS = {
+    "DUPLICATE_ROLLBACK": "两侧库存都比应有值多，疑似同一条回滚消息执行了两次（多退，有超卖风险）",
+    "REDIS_OVER_ROLLBACK": "Redis 剩余比应有值多，疑似回滚把库存加多了（多退，有超卖风险）",
+    "WAREHOUSE_OVER_ROLLBACK": "仓库剩余比应有值多，疑似 product_stock 被多加了库存（多退）",
+    "ROLLBACK_MISSED": "库存比应有值少，退单可能没有归还库存，或库存扣了但订单没落库（少退，少卖）",
+    "MIXED_SIGN": "两侧偏差方向相反，不能归因为单一原因，需要人工核对",
+}
 
-    判定口径（契约 §2.3）：
-    - Redis 不可读（redisStock=null）→ 无法确认，直接可疑
-    - 净消耗 stockTotal - redisStock 大于本场订单数 → Redis 已经扣了但订单没落库，
-      可能是消费者丢消息（nack requeue=false 且无死信，见 CLAUDE.md）
-    - redisStock 超出 [0, stockTotal] → 预热/回滚把数量加坏了
-    dbStock(product_stock) 与 redisStock 的差值只作为参考信息展示：
-    活动配额和仓库余量本来就可能不相等（商品 7 是 30/50），不能拿来判定。
+
+def _side_detail(label: str, side: dict, expected_key: str, actual_key: str) -> str | None:
+    gap = side.get("gap")
+    if gap is None:
+        return None
+    expected = side.get(expected_key)
+    actual = side.get(actual_key)
+    return f"{label}：应为 {expected}，实际 {actual}（gap={gap:+d}）"
+
+
+def _diagnose_one(reconcile: dict) -> dict | None:
+    """把一次对账结果转成可疑记录；OK / PENDING 返回 None。
+
+    判定完全交给 Java 的 `GET /reconcile`（契约 §1.7）：
+    OK 与 PENDING（还有消息在队列里）不算问题；
+    DRIFT 确认漂移；UNKNOWN（读数缺失）与 STALE（读数已被后来的场次改写）无法下结论，
+    但也不能当作「正常」告诉用户。
     """
-    total = stats.get("stockTotal")
-    consumed = stats.get("stockConsumed")
-    orders = stats.get("orderCount")
-    redis = stock.get("redisStock")
-
-    reasons = []
-    if redis is None:
-        reasons.append("Redis 库存不可读，无法判断是否漂移")
-    else:
-        if total is not None and not (0 <= redis <= total):
-            reasons.append(f"Redis 剩余 {redis} 超出活动配额范围 0–{total}")
-        if consumed is not None and orders is not None and consumed > orders:
-            reasons.append(
-                f"净消耗 {consumed} 大于订单数 {orders}，可能存在消息未落库"
-            )
-    if not reasons:
+    verdict = reconcile.get("verdict")
+    if verdict in ("OK", "PENDING"):
         return None
 
+    quota = reconcile.get("quota") or {}
+    warehouse = reconcile.get("warehouse") or {}
+    fingerprint = reconcile.get("fingerprint")
+    reasons: list[str] = []
+
+    if verdict == "DRIFT":
+        hint = _FINGERPRINT_HINTS.get(fingerprint)
+        if hint:
+            reasons.append(hint)
+        quota_detail = _side_detail("配额侧", quota, "expectedRedis", "redisStock")
+        warehouse_detail = _side_detail("仓库侧", warehouse, "expectedDb", "dbStock")
+        reasons.extend(detail for detail in (quota_detail, warehouse_detail) if detail)
+    elif verdict == "UNKNOWN":
+        if quota.get("redisStock") is None:
+            reasons.append("Redis 库存不可读，配额侧无法判定")
+        if warehouse.get("baseline") is None:
+            reasons.append("活动没有预热基线（对账上线前的历史活动），仓库侧无法判定")
+        if not reasons:
+            reasons.append("缺少读数，无法判定")
+    elif verdict == "STALE":
+        reasons.append("同一商品已有更新的场次，Redis 与仓库读数已被后来的活动改写，本场无法判定")
+    else:
+        reasons.append(f"对账返回了未知结论 {verdict}")
+
     return {
-        "eventId": event.get("id"),
-        "productId": event.get("productId"),
-        "stockTotal": total,
-        "redisStock": redis,
-        "dbStock": stock.get("dbStock"),
-        "ordersOutstanding": stock.get("ordersOutstanding"),
-        "stockConsumed": consumed,
-        "orderCount": orders,
+        "eventId": reconcile.get("eventId"),
+        "productId": reconcile.get("productId"),
+        "status": reconcile.get("status"),
+        "verdict": verdict,
+        "fingerprint": fingerprint,
+        "backlog": reconcile.get("backlog"),
+        "stockTotal": quota.get("total"),
+        "redisStock": quota.get("redisStock"),
+        "orderCount": quota.get("orderCount"),
+        "cancelledCount": quota.get("cancelledCount"),
+        "dbStock": warehouse.get("dbStock"),
+        "quota": quota,
+        "warehouse": warehouse,
         "reasons": reasons,
     }
 
@@ -180,44 +215,43 @@ def _diagnose_one(event: dict, stats: dict, stock: dict) -> dict | None:
 @mcp.tool(
     name="diagnose_stock",
     description=(
-        "检查库存一致性——对比活动净消耗、订单数与 Redis 实际库存，找出可能的漂移。"
+        "检查库存一致性——双向对账：配额侧（活动总配额 vs Redis 剩余）与"
+        "仓库侧（预热基线 vs product_stock）各自和净订单数比对，找出漂移并给出可能成因。"
         "用户问「库存对不对 / 有没有超卖 / 为什么抢不到」时使用。"
-        "传 eventId 只查一场，不传则查全部进行中的活动。只诊断，不修复。"
+        "传 eventId 只查一场，不传则查全部仍可对账的活动（进行中及刚结束 30 分钟内）。"
+        "只诊断，不修复。"
     ),
 )
 async def diagnose_stock(
-    eventId: Annotated[int | None, Field(ge=1, description="只查指定活动；不传则查全部进行中")] = None,
+    eventId: Annotated[
+        int | None, Field(ge=1, description="只查指定活动；不传则查全部仍可对账的活动")
+    ] = None,
 ) -> dict:
     client = get_client()
     try:
         if eventId is not None:
-            event_ids = [eventId]
+            results = [await client.reconcile(eventId)]
         else:
-            listing = await client.list_events("running", None, 1, size=10)
-            records = listing.get("records") or []
-            event_ids = [r.get("id") for r in records if r.get("id") is not None]
-            if not event_ids:
-                return _ok(
-                    {"checked": 0, "suspicious": [], "message": "当前没有进行中的活动"}
-                )
-
-        suspicious = []
-        for current_id in event_ids:
-            result = await client.get_stats(current_id)
-            event = result.get("event") or {}
-            stats = result.get("stats") or {}
-            stock = result.get("stock") or {}
-            finding = _diagnose_one(event, stats, stock)
-            if finding is not None:
-                suspicious.append(finding)
+            results = await client.reconcile_all()
     except Exception as exc:  # noqa: BLE001
         return _fail_from(exc)
 
-    checked = len(event_ids)
+    if not results:
+        return _ok(
+            {"checked": 0, "suspicious": [], "message": "当前没有可对账的活动"}
+        )
+
+    suspicious = [finding for finding in map(_diagnose_one, results) if finding is not None]
+    checked = len(results)
     if suspicious:
-        message = f"检查了 {checked} 个活动，发现 {len(suspicious)} 个可能有库存漂移。"
+        drift = sum(1 for finding in suspicious if finding["verdict"] == "DRIFT")
+        uncertain = len(suspicious) - drift
+        message = f"检查了 {checked} 个活动：{drift} 个确认库存漂移"
+        if uncertain:
+            message += f"，{uncertain} 个缺少读数无法判定"
+        message += "。"
     else:
-        message = f"检查了 {checked} 个活动，未发现明显的库存漂移。"
+        message = f"检查了 {checked} 个活动，配额侧与仓库侧都能对上。"
     return _ok({"checked": checked, "suspicious": suspicious, "message": message})
 
 

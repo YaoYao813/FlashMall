@@ -150,7 +150,7 @@ public class OrderServiceImpl implements OrderService {
      * <p>消息里必须带 orderId：消费端用它做幂等键，重复投递时靠它判断「这单已经退过」。
      *
      * <p>发送失败只记日志不抛异常：此时订单状态已经是终态，抛出去只会让用户以为
-     * 取消失败、反复重试。库存少退会被对账（quota 侧负向 gap）发现，属于可修的偏差；
+     * 取消失败、反复重试。库存少退会被对账（配额侧 gap &gt; 0）发现，属于可修的偏差；
      * 而状态回滚或重复回滚才是不可修的。宁可少卖。
      */
     private void rollbackStock(Order order, String reason) {

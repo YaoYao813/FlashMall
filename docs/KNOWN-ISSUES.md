@@ -276,7 +276,10 @@ curl.exe -s -X POST "http://localhost:8888/api/pay/mock?orderNo=<刚返回的ord
     仓库侧 `D0 - D = O - X + 在途`；`在途` 取主队列 + 回滚队列的 ready 消息数
   - 同商品已有更新场次时判 `STALE`（Redis 键与 `product_stock` 都按商品维护，旧场次读数已被覆盖）
   - 只读：不提供一键修复，避免把「订单还没落库」误判成「库存多扣」而自动补库存
-  - 服务内每 60 秒扫描，连续两次 DRIFT 才打 `reconcile.mismatch` ERROR
+  - 服务内每 60 秒扫描，连续两次 DRIFT 才升级为 ERROR；告警是单行 JSON
+    `reconcile.alert {...}`（2026-11-12 改，原为 `reconcile.suspect` / `reconcile.mismatch`）
+  - `fingerprint` 把 DRIFT 归到可能成因（`DUPLICATE_ROLLBACK` / `*_OVER_ROLLBACK` /
+    `ROLLBACK_MISSED` / `MIXED_SIGN`），同一实现同时供告警日志与 Agent 诊断使用
 - 验收证据：`acceptance_reconcile.py` **PASS 18 / FAIL 0**（正常 OK、Redis 手改 2 件 → 配额侧 DRIFT、
   仓库手改 2 件 → 仓库侧 DRIFT、恢复后重新 OK）
 - 已知局限：`在途` 只统计 ready 消息，不含已投递未 ack 的那一批，
@@ -316,6 +319,7 @@ curl.exe -s -X POST "http://localhost:8888/api/pay/mock?orderNo=<刚返回的ord
 | 6 | P0-1 步骤 4 + 5（DLQ 重放脚本） | 步骤 1 | ✅ 2026-11-12 |
 | 7 | P1-6 双向自动对账 + 仓库基线 | 无 | ✅ 2026-11-12 |
 | 8 | P1-7 库存回滚幂等（台账 + DB 先 Redis 后） | 无 | ✅ 2026-11-12 |
+| 9 | 阶段 4：统计补 `cancelledCount`、对账补 `fingerprint`、告警改单行 JSON、Agent 诊断改走 `/reconcile` | 步骤 7 | ✅ 2026-11-12 |
 
 **建议一个独立分支 `fix/seckill-reliability`，按顺序一次一项，每项改完跑回归。**
 
@@ -330,6 +334,8 @@ python scripts/acceptance_dlq.py         # 要求 10/10
 python scripts/acceptance_reconcile.py   # 要求 18/18
 python scripts/acceptance_stage3.py      # 要求 28/28
 mvn -q -pl seckill-service,order-service -am test   # 单测全绿
+cd agent-service && .venv/Scripts/python -m pytest -q          # 要求 47 passed
+cd agent-service && .venv/Scripts/python ../scripts/acceptance_m4.py  # 要求 26/26
 ```
 
 注意：`acceptance_m2.py` / `acceptance_m3.py` 会留下 15 分钟后的延迟取消消息，
@@ -373,3 +379,7 @@ mvn -q -pl seckill-service,order-service -am test   # 单测全绿
 | 2026-11-12 | Redis 回滚失败时 ack 而不是重投 | Redis 回滚无幂等保护，重投可能多 +1；DB 已退、Redis 未退的差异交给对账 |
 | 2026-11-12 | 回滚台账用独立表 `stock_rollback_log`，不挂在订单状态上 | 回滚有两个来源（CANCEL / TIMEOUT），订单状态只能表达最终态，看不出谁在什么时候退的 |
 | 2026-11-12 | 老格式回滚消息（缺 orderId）打 ERROR 后丢弃 | 无法去重；多退（超卖）不可修，少退能被对账发现并人工补 |
+| 2026-11-12 | 阶段 4 完成：`cancelledCount` + `fingerprint` + 结构化告警 + Agent 双向诊断 | 单测 134 绿；回归 21/21、18/18、28/28、Agent e2e 26/26 |
+| 2026-11-12 | 对账成因用 `fingerprint` 表达，Agent 只翻译不重算 | 两端各算一遍口径迟早不一致；判定留在 Java（业务真相源） |
+| 2026-11-12 | 告警日志改单行 JSON `reconcile.alert`，字段与接口同名 | 原来的 `key=value` 只能肉眼看，无法按 `fingerprint`/`eventId` 聚合 |
+| 2026-11-12 | 诊断工具改走 `GET /reconcile`，不再逐个拉 `stats` 自己拼 | 旧口径漏掉仓库侧，且「净消耗 > 订单数」会把 PENDING 误报成漂移 |

@@ -44,7 +44,7 @@ class EventStatsServiceImplTest {
     @Test
     void computesCountsGmvAndRates() {
         stubs(runningEvent(10, new BigDecimal("9.90")));
-        when(orderMapper.selectCount(any())).thenReturn(3L, 1L, 1L);
+        when(orderMapper.selectCount(any())).thenReturn(3L, 1L, 1L, 1L);
         when(cache.getStock(7L)).thenReturn(7);
         when(productStockMapper.selectByProductId(7L)).thenReturn(warehouse(7));
 
@@ -52,6 +52,7 @@ class EventStatsServiceImplTest {
 
         assertEquals(3, vo.getStats().getOrderCount());
         assertEquals(1, vo.getStats().getPaidCount());
+        assertEquals(1, vo.getStats().getCancelledCount());
         assertEquals(new BigDecimal("9.90"), vo.getStats().getGmv());
         assertEquals(new BigDecimal("0.3333"), vo.getStats().getPayRate());
         assertEquals(10, vo.getStats().getStockTotal());
@@ -67,12 +68,13 @@ class EventStatsServiceImplTest {
     @Test
     void zeroOrdersYieldsZeroRatesAndGmv() {
         stubs(runningEvent(10, new BigDecimal("9.90")));
-        when(orderMapper.selectCount(any())).thenReturn(0L, 0L, 0L);
+        when(orderMapper.selectCount(any())).thenReturn(0L, 0L, 0L, 0L);
         when(cache.getStock(7L)).thenReturn(10);
         when(productStockMapper.selectByProductId(7L)).thenReturn(warehouse(10));
 
         EventStatsVO vo = service.stats(9L);
 
+        assertEquals(0, vo.getStats().getCancelledCount());
         assertEquals(new BigDecimal("0.00"), vo.getStats().getGmv());
         assertEquals(new BigDecimal("0.0000"), vo.getStats().getPayRate());
         assertEquals(0, vo.getStats().getStockConsumed());
@@ -82,7 +84,7 @@ class EventStatsServiceImplTest {
     @Test
     void redisUnavailableReturnsNullStockInsteadOfZero() {
         stubs(runningEvent(10, new BigDecimal("9.90")));
-        when(orderMapper.selectCount(any())).thenReturn(3L, 1L, 1L);
+        when(orderMapper.selectCount(any())).thenReturn(3L, 1L, 1L, 1L);
         when(cache.getStock(7L)).thenThrow(new RedisConnectionFailureException("down"));
         when(productStockMapper.selectByProductId(7L)).thenReturn(warehouse(7));
 
@@ -182,8 +184,8 @@ class EventStatsServiceImplTest {
 
         service.stats(9L);
 
-        // 三次计数：全部 / 已支付 / 待支付
-        verify(orderMapper, org.mockito.Mockito.times(3)).selectCount(any());
+        // 四次计数：全部 / 已支付 / 待支付 / 已取消+超时
+        verify(orderMapper, org.mockito.Mockito.times(4)).selectCount(any());
     }
 
     private void stubs(SeckillEvent event) {

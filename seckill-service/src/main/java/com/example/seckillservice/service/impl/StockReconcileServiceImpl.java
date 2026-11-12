@@ -12,6 +12,8 @@ import com.example.seckillservice.config.RabbitMQConfig;
 import com.example.seckillservice.enums.EventStatus;
 import com.example.seckillservice.service.StockReconcileService;
 import com.example.seckillservice.vo.ReconcileVO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -23,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,10 +61,20 @@ public class StockReconcileServiceImpl implements StockReconcileService {
     /** 同一商品已有更新的场次，Redis 与仓库都已被后来的活动改写，本场无从判定 */
     static final String VERDICT_STALE = "STALE";
 
+    static final String FINGERPRINT_NONE = "NONE";
+    static final String FINGERPRINT_DUPLICATE_ROLLBACK = "DUPLICATE_ROLLBACK";
+    static final String FINGERPRINT_REDIS_OVER_ROLLBACK = "REDIS_OVER_ROLLBACK";
+    static final String FINGERPRINT_WAREHOUSE_OVER_ROLLBACK = "WAREHOUSE_OVER_ROLLBACK";
+    static final String FINGERPRINT_ROLLBACK_MISSED = "ROLLBACK_MISSED";
+    static final String FINGERPRINT_MIXED_SIGN = "MIXED_SIGN";
+
     /** 活动结束后仍然纳入扫描的分钟数：给队列排空和超时取消留时间 */
     private static final int RECENT_MINUTES = 30;
     /** 连续多少次扫描都是 DRIFT 才升级为 ERROR */
     private static final int ALERT_STREAK = 2;
+
+    /** 告警行是单行 JSON，方便日志系统按字段检索；序列化失败时退化为 key=value */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SeckillEventMapper seckillEventMapper;
     private final OrderMapper orderMapper;
@@ -162,6 +175,7 @@ public class StockReconcileServiceImpl implements StockReconcileService {
                 .status(EventStatus.of(event.getStartTime(), event.getEndTime(),
                         LocalDateTime.now()).getCode())
                 .verdict(verdict)
+                .fingerprint(fingerprint(verdict, quota.getGap(), warehouse.getGap()))
                 .backlog(backlog)
                 .quota(quota)
                 .warehouse(warehouse)
@@ -240,6 +254,40 @@ public class StockReconcileServiceImpl implements StockReconcileService {
         return VERDICT_OK;
     }
 
+    /**
+     * 从两侧 gap 的符号猜一个「可能的成因」。只用于告警定位和运营解释，
+     * 不参与判定，也绝不据此自动修复。
+     *
+     * <p>gap 的符号语义：负 = 库存比应有值多（多退，超卖风险）；
+     * 正 = 库存比应有值少（少退，或库存扣了但订单没落库）。
+     */
+    String fingerprint(String verdict, Integer quotaGap, Integer warehouseGap) {
+        if (!VERDICT_DRIFT.equals(verdict)) {
+            return FINGERPRINT_NONE;
+        }
+        boolean quotaNegative = quotaGap != null && quotaGap < 0;
+        boolean warehouseNegative = warehouseGap != null && warehouseGap < 0;
+        boolean quotaPositive = quotaGap != null && quotaGap > 0;
+        boolean warehousePositive = warehouseGap != null && warehouseGap > 0;
+
+        if (quotaNegative && warehouseNegative) {
+            // 两侧同时多出同样的数量，最常见的原因是同一条回滚消息被执行了两次
+            return FINGERPRINT_DUPLICATE_ROLLBACK;
+        }
+        if ((quotaNegative && warehousePositive) || (quotaPositive && warehouseNegative)) {
+            // 方向相反说明不是一个原因造成的，硬归因会误导排查
+            return FINGERPRINT_MIXED_SIGN;
+        }
+        if (quotaNegative) {
+            return FINGERPRINT_REDIS_OVER_ROLLBACK;
+        }
+        if (warehouseNegative) {
+            return FINGERPRINT_WAREHOUSE_OVER_ROLLBACK;
+        }
+        // 没有负值又是 DRIFT：至少一侧 gap > 0
+        return FINGERPRINT_ROLLBACK_MISSED;
+    }
+
     // ==================== 告警 ====================
 
     private void alert(ReconcileVO vo) {
@@ -249,21 +297,39 @@ public class StockReconcileServiceImpl implements StockReconcileService {
             return;
         }
         int streak = driftStreak.merge(eventId, 1, Integer::sum);
+        String line = alertLine(vo, streak);
         if (streak < ALERT_STREAK) {
-            log.warn("reconcile.suspect eventId={} productId={} quotaGap={} warehouseGap={} "
-                            + "backlog={} streak={}",
-                    eventId, vo.getProductId(), vo.getQuota().getGap(),
-                    vo.getWarehouse().getGap(), vo.getBacklog(), streak);
+            log.warn("reconcile.alert {}", line);
             return;
         }
-        log.error("reconcile.mismatch eventId={} productId={} status={} quotaGap={} "
-                        + "warehouseGap={} redisStock={} dbStock={} orderCount={} "
-                        + "cancelledCount={} backlog={}",
-                eventId, vo.getProductId(), vo.getStatus(),
-                vo.getQuota().getGap(), vo.getWarehouse().getGap(),
-                vo.getQuota().getRedisStock(), vo.getWarehouse().getDbStock(),
-                vo.getQuota().getOrderCount(), vo.getQuota().getCancelledCount(),
-                vo.getBacklog());
+        log.error("reconcile.alert {}", line);
+    }
+
+    /**
+     * 单行 JSON。字段名与 {@code GET /reconcile} 的返回保持同名同义，
+     * 方便从日志直接对照接口结果，也方便按 fingerprint 做聚合告警。
+     *
+     * <p>未知的读数一律是 {@code null}，不要读成 0（顶层 null 字段会被省略，
+     * quota / warehouse 内部的 null 显式输出）。
+     */
+    static String alertLine(ReconcileVO vo, int streak) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("level", streak < ALERT_STREAK ? "SUSPECT" : "ALERT");
+        payload.put("eventId", vo.getEventId());
+        payload.put("productId", vo.getProductId());
+        payload.put("status", vo.getStatus());
+        payload.put("verdict", vo.getVerdict());
+        payload.put("fingerprint", vo.getFingerprint());
+        payload.put("streak", streak);
+        payload.put("backlog", vo.getBacklog());
+        payload.put("quota", vo.getQuota());
+        payload.put("warehouse", vo.getWarehouse());
+        try {
+            return JSON.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            // 序列化失败不能影响扫描继续跑：退化成一行 key=value，至少不丢告警
+            return payload.toString();
+        }
     }
 
     // ==================== 读数 ====================

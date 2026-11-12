@@ -21,7 +21,7 @@ import java.util.Map;
  * <p>执行顺序固定为 <b>先 DB、后 Redis</b>：
  * <ul>
  *   <li>DB 先成、Redis 失败 → Redis 比真实库存少 1，结果是「少卖」，活动结束后库存有剩；
- *       对账（{@code GET /api/admin/seckill/reconcile}）会出现 quota 侧负向 gap，可定位可修。</li>
+ *       对账（{@code GET /api/admin/seckill/reconcile}）会出现 quota 侧正向 gap，可定位可修。</li>
  *   <li>Redis 先成、DB 失败 → Redis 有货但仓库没有，是「多卖」，用户下单后库存扣不动，
  *       消息进死信，用户被卡住。宁可少卖。</li>
  * </ul>

@@ -25,6 +25,7 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
@@ -73,6 +74,7 @@ class StockReconcileServiceImplTest {
         ReconcileVO vo = service.reconcile(EVENT_ID);
 
         assertEquals("OK", vo.getVerdict());
+        assertEquals("NONE", vo.getFingerprint());
         assertEquals(0, vo.getQuota().getGap());
         assertEquals(0, vo.getWarehouse().getGap());
         assertEquals(8, vo.getQuota().getExpectedRedis());
@@ -117,6 +119,8 @@ class StockReconcileServiceImplTest {
         assertEquals("DRIFT", vo.getVerdict());
         assertEquals("DRIFT", vo.getQuota().getVerdict());
         assertEquals("OK", vo.getWarehouse().getVerdict());
+        // 正 gap = Redis 少退了（退单没有归还库存），不是多退
+        assertEquals("ROLLBACK_MISSED", vo.getFingerprint());
     }
 
     @Test
@@ -130,6 +134,7 @@ class StockReconcileServiceImplTest {
         assertEquals("OK", vo.getQuota().getVerdict());
         assertEquals("DRIFT", vo.getWarehouse().getVerdict());
         assertEquals(3, vo.getWarehouse().getGap());
+        assertEquals("ROLLBACK_MISSED", vo.getFingerprint());
     }
 
     @Test
@@ -141,6 +146,45 @@ class StockReconcileServiceImplTest {
 
         assertEquals("DRIFT", vo.getVerdict());
         assertEquals(-1, vo.getQuota().getGap());
+        assertEquals("REDIS_OVER_ROLLBACK", vo.getFingerprint());
+    }
+
+    @Test
+    @DisplayName("只有仓库侧多退：WAREHOUSE_OVER_ROLLBACK")
+    void testWarehouseOverRollbackFingerprint() {
+        given(8, 49, 2, 0);
+
+        ReconcileVO vo = service.reconcile(EVENT_ID);
+
+        assertEquals("DRIFT", vo.getVerdict());
+        assertEquals(-1, vo.getWarehouse().getGap());
+        assertEquals("WAREHOUSE_OVER_ROLLBACK", vo.getFingerprint());
+    }
+
+    @Test
+    @DisplayName("两侧同时多退：DUPLICATE_ROLLBACK（同一条回滚消息执行了两次）")
+    void testDuplicateRollbackFingerprint() {
+        given(10, 50, 2, 1);
+
+        ReconcileVO vo = service.reconcile(EVENT_ID);
+
+        assertEquals("DRIFT", vo.getVerdict());
+        assertTrue(vo.getQuota().getGap() < 0);
+        assertTrue(vo.getWarehouse().getGap() < 0);
+        assertEquals("DUPLICATE_ROLLBACK", vo.getFingerprint());
+    }
+
+    @Test
+    @DisplayName("两侧方向相反：MIXED_SIGN，不硬归因")
+    void testMixedSignFingerprint() {
+        given(12, 46, 0, 0);
+
+        ReconcileVO vo = service.reconcile(EVENT_ID);
+
+        assertEquals("DRIFT", vo.getVerdict());
+        assertTrue(vo.getQuota().getGap() < 0);
+        assertTrue(vo.getWarehouse().getGap() > 0);
+        assertEquals("MIXED_SIGN", vo.getFingerprint());
     }
 
     @Test

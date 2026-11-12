@@ -58,7 +58,8 @@ Docker 服务通过 `DB_HOST=mysql` 连容器；本地 `mvn spring-boot:run` 跑
 - `seckill.order.queue` 带死信参数，**队列参数不可变更**：改 `RabbitMQConfig` 里的
   `x-dead-letter-*` 必须先 `rabbitmqctl delete_queue seckill.order.queue` 再重启，否则 `PRECONDITION_FAILED`
 - 库存对账（`GET /api/admin/seckill/reconcile`）只读、不自动修；`在途` 只统计队列 ready 消息，
-  不含已投递未 ack 的那批，高峰时可能瞬时出现假 `DRIFT`，告警要求连续两次才升级
+  不含已投递未 ack 的那批，高峰时可能瞬时出现假 `DRIFT`，告警要求连续两次才升级。
+  告警是单行 JSON `reconcile.alert {...}`，`fingerprint` 只是成因提示，不参与判定
 - 对账的 `STALE` 只覆盖「同商品有更新的场次」；若后续测试/手工操作改过同一商品的
   Redis 或 `product_stock`（而该活动本身是最新场次），它会一直报 `DRIFT`——不是代码回归
 - `seckill_event.warehouse_baseline` 由预热写入；对账上线前的老活动该列为 NULL，仓库侧返回 `UNKNOWN`
