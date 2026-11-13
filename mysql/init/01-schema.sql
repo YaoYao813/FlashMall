@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS `seckill_event` (
     `product_id` BIGINT NOT NULL COMMENT '商品ID',
     `seckill_price` DECIMAL(10,2) NOT NULL COMMENT '秒杀价格',
     `stock` INT NOT NULL DEFAULT 0 COMMENT '秒杀库存',
+    `warehouse_baseline` INT NULL COMMENT '预热时的仓库库存基线（D0），用于双向对账',
     `start_time` DATETIME NOT NULL COMMENT '开始时间',
     `end_time` DATETIME NOT NULL COMMENT '结束时间',
     PRIMARY KEY (`id`),
@@ -87,6 +88,18 @@ CREATE TABLE IF NOT EXISTS `address` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收货地址表';
 
 -- 7. 订单表（`order` 是 MySQL 保留字，需要反引号）
+-- 库存回滚幂等台账。order_id 同时是主键，重复回滚直接撞主键被拒。
+CREATE TABLE IF NOT EXISTS `stock_rollback_log` (
+    `order_id` BIGINT NOT NULL COMMENT '订单ID（幂等键）',
+    `order_no` VARCHAR(64) DEFAULT NULL COMMENT '订单号，便于人工排查',
+    `product_id` BIGINT NOT NULL COMMENT '商品ID',
+    `user_id` BIGINT DEFAULT NULL COMMENT '用户ID',
+    `reason` VARCHAR(16) DEFAULT NULL COMMENT 'CANCEL / TIMEOUT',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '回滚时间',
+    PRIMARY KEY (`order_id`),
+    KEY `idx_product_id` (`product_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='库存回滚幂等台账';
+
 CREATE TABLE IF NOT EXISTS `order` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '订单ID',
     `order_no` VARCHAR(64) NOT NULL COMMENT '订单编号',

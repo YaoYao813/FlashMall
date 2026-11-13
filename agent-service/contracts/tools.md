@@ -161,8 +161,8 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 ```json
 {
   "event": {"id":9,"productId":7,"status":"running","stock":50,"startTime":"...","endTime":"..."},
-  "stats": {"orderCount":12,"paidCount":9,"gmv":2699.10,"payRate":0.75,
-            "stockTotal":50,"stockConsumed":12,"consumeRate":0.24},
+  "stats": {"orderCount":12,"paidCount":9,"cancelledCount":1,"gmv":2699.10,"payRate":0.75,
+            "stockTotal":50,"stockConsumed":11,"consumeRate":0.22},
   "stock": {"dbStock":38,"redisStock":38,"ordersOutstanding":0}
 }
 ```
@@ -171,6 +171,8 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 
 - `orderCount`：`order.product_id=?` 且 `create_time` 落在 `[start_time, end_time]`
 - `paidCount`：上述订单中 `status ∈ (1,2,3)`（已支付 / 已发货 / 已完成）
+- `cancelledCount`：上述订单中 `status ∈ (4,5)`（已取消 / 已超时）。`orderCount` 包含它们，
+  所以「净订单」= `orderCount - cancelledCount`；`payRate` 的分母仍是 `orderCount`（保持历史口径）
 - `gmv`：`paidCount × event.seckill_price`，保留 2 位小数。
   **不要 `SUM(order.total_amount)`**：消费者落库写的是 `product.price`（原价），不是秒杀成交价
 - `payRate = paidCount / orderCount`；`orderCount=0` 时为 `0`
@@ -194,6 +196,69 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 3. 之后原样走 `seckillRedisScript.executeSeckill(...)`
 
 **不许改** `seckill.lua`、`SeckillConsumer`、`StockRollbackConsumer`、`ProductStockMapper.decrementStock`。
+
+---
+
+### 1.7 `GET /api/admin/seckill/reconcile` — 库存对账
+
+`GET /api/admin/seckill/reconcile?eventId=9`；`GET /api/admin/seckill/reconcile/all`
+返回「尚未结束或结束 30 分钟内」的全部活动。
+
+```json
+{
+  "eventId": 9,
+  "productId": 7,
+  "status": "running",
+  "verdict": "OK",
+  "fingerprint": "NONE",
+  "backlog": 0,
+  "quota": {
+    "total": 50, "redisStock": 38, "orderCount": 12, "cancelledCount": 0,
+    "expectedRedis": 38, "gap": 0, "verdict": "OK"
+  },
+  "warehouse": {
+    "baseline": 50, "dbStock": 38, "expectedDb": 38, "gap": 0, "verdict": "OK"
+  }
+}
+```
+
+口径：
+
+- 两条不变量，都含净消耗 `O - X`：
+
+  ```
+  配额侧：Q - R  = O - X + 在途
+  仓库侧：D0 - D = O - X + 在途
+  ```
+
+  `Q=event.stock`，`R=redisStock`，`D0=event.warehouse_baseline`（预热时写入），
+  `D=product_stock.stock`，`O=活动窗口内订单数`，`X=其中 status ∈ (4,5) 的数量`
+- `gap = 应有消耗 - 实际消耗`。判定：`0 → OK`；`<0 → DRIFT`（正常链路产生不了负数）；
+  `0 < gap <= backlog → PENDING`（队列里还有没消费完的消息）；`gap > backlog → DRIFT`
+- `backlog = seckill.order.queue` + `seckill.stock.rollback.queue` 的 **ready** 消息数。
+  不含已投递未 ack 的那一批，因此瞬时可能出现假 DRIFT
+- `verdict` 取值：`OK` / `PENDING` / `DRIFT` / `UNKNOWN` / `STALE`。合并规则：任一侧 DRIFT 即 DRIFT；
+  否则任一侧 UNKNOWN 即 UNKNOWN；否则任一侧 PENDING 即 PENDING
+- `STALE`：同一商品已经存在更新的场次。Redis 库存键和 `product_stock` 都是**按商品**维护的，
+  被后来的活动预热/卖出改写过，旧场次的两侧读数不再可比。此时两侧 verdict 也是 `STALE`，
+  数字照常返回但仅供参考；`/reconcile/all` 不返回 STALE 的场次，定时扫描也不告警
+- `UNKNOWN`：Redis 不可达（`quota`）或 `warehouse_baseline` 为空（历史活动，`warehouse`）。
+  未知一律为 `null`，不用 `0` 冒充
+- `fingerprint`：DRIFT 的**可能成因**，非 DRIFT 一律 `NONE`。只用于定位与解释，
+  不参与判定、不触发自动修复：
+  - `DUPLICATE_ROLLBACK`：两侧 gap 都 `< 0`，同一回滚消息执行了两次（多退）
+  - `REDIS_OVER_ROLLBACK` / `WAREHOUSE_OVER_ROLLBACK`：只有对应一侧 gap `< 0`（多退）
+  - `ROLLBACK_MISSED`：至少一侧 gap `> 0`，退单没归还库存，或库存扣了但订单没落库（少退）
+  - `MIXED_SIGN`：两侧方向相反，不能归因为单一原因
+
+  符号语义：`gap < 0` = 库存比应有值**多**（多退，超卖风险）；`gap > 0` = 比应有值**少**
+  （少退，少卖）。注意 `ROLLBACK_MISSED` 是「可能成因」，不是定论
+- **只读**。没有「一键修复」接口：偏差分不清「Redis 多扣」和「订单还没落库」，
+  自动补库存会把一次延迟变成一次真的超卖
+- 服务内每 60 秒扫一次（`seckill.reconcile.interval-ms`）。DRIFT 连续第一次打
+  `reconcile.alert` WARN（`level=SUSPECT`），连续第二次起打 ERROR（`level=ALERT`）。
+  每次都是**单行 JSON**，字段与接口同名：`level,eventId,productId,status,verdict,
+  fingerprint,streak,backlog,quota,warehouse`；null 字段省略（不要读成 0）
 
 ---
 
@@ -238,9 +303,10 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 
 ### 2.3 `diagnose_stock`（读）
 
-- **description**：检查库存一致性——对比数据库活动库存、Redis 实际库存、未支付订单数，
-  找出可能的漂移。用户问「库存对不对 / 有没有超卖 / 为什么抢不到」时使用。
-  传 `eventId` 只查一场，不传则查全部进行中的活动。
+- **description**：检查库存一致性——双向对账：配额侧（活动总配额 vs Redis 剩余）与
+  仓库侧（预热基线 vs `product_stock`）各自和净订单数比对，找出漂移并给出可能成因。
+  用户问「库存对不对 / 有没有超卖 / 为什么抢不到」时使用。
+  传 `eventId` 只查一场，不传则查全部仍可对账的活动（进行中及刚结束 30 分钟内）。
 - **参数**
 
 ```json
@@ -249,13 +315,19 @@ Header（仅 `increment` 使用）：`Idempotency-Key: <thread_id:tool_call_id>`
 },"required":[]}
 ```
 
-- **映射**：`GET /api/admin/seckill/events?status=running` + 逐个 `GET .../{id}/stats`
-- **判定**（任一成立即标记可疑，并输出具体差值）：
-  - `redisStock` 为 `null`（Redis 不可读，无法确认）
-  - `redisStock` 不在 `[0, stockTotal]` 内（预热/回滚把数量加坏）
-  - `stockConsumed > orderCount`（Redis 已扣但订单没落库，可能是消费者丢消息）
-  - `stock.dbStock - redisStock` 只作为参考差值展示，**不参与判定**：
-    活动配额与仓库余量本来就可以不相等（商品 7 是 30/50），且消费者会同步扣两边，差值无固定口径
+- **映射**：`GET /api/admin/seckill/reconcile?eventId=9`（单场）或
+  `GET /api/admin/seckill/reconcile/all`（全部）。**判定完全交给 Java**，
+  Agent 不再自己用 stats 拼口径——两端口径各算一遍迟早会不一致
+- **判定**（直接读 `verdict`）：
+  - `OK` / `PENDING`：不算问题（PENDING = 队列里还有消息没消费完）
+  - `DRIFT`：确认漂移。用 `fingerprint` 给出可能成因，并输出两侧
+    `expected* vs 实际值（gap）`
+  - `UNKNOWN`：读数缺失（Redis 不可读 / 历史活动没有预热基线）。**不能当成正常**
+  - `STALE`：同商品已有更新的场次，读数已被改写，本场无法判定。同样不能当成正常
+- **返回**：`{checked, suspicious[], message}`；`suspicious[]` 每项含
+  `eventId, productId, status, verdict, fingerprint, backlog, stockTotal,
+  redisStock, orderCount, cancelledCount, dbStock, quota, warehouse, reasons[]`。
+  `reasons` 是可直接给用户看的中文句子
 - **写操作**：否（**只诊断，不修复**；修复走 `adjust_seckill_stock`）
 
 ### 2.4 `create_seckill_event`（写）

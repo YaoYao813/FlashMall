@@ -42,4 +42,20 @@ public interface SeckillEventMapper extends BaseMapper<SeckillEvent> {
     @Update("UPDATE seckill_event SET stock = stock + #{delta} " +
             "WHERE id = #{id} AND stock + #{delta} >= 0")
     int incrementStock(@Param("id") Long id, @Param("delta") int delta);
+
+    /**
+     * 记录预热时的仓库库存基线（D0），供对账判定仓库侧消耗。
+     * 单独一个 UPDATE 而不是 updateById：后者会把整行字段一起覆盖。
+     */
+    @Update("UPDATE seckill_event SET warehouse_baseline = #{baseline} WHERE id = #{id}")
+    int updateWarehouseBaseline(@Param("id") Long id, @Param("baseline") Integer baseline);
+
+    /**
+     * 同一商品是否有比该活动更新的场次。
+     * Redis 库存键与 product_stock 都是「按商品」而不是「按活动」的，
+     * 后来的活动一预热就会覆盖前者、一卖出就会改动后者，
+     * 此时旧活动的对账没有意义，只能判 STALE。
+     */
+    @Select("SELECT COUNT(*) FROM seckill_event WHERE product_id = #{productId} AND id > #{id}")
+    int countNewerEvents(@Param("productId") Long productId, @Param("id") Long id);
 }

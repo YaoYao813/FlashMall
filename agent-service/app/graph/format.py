@@ -36,16 +36,26 @@ def render_stats(data: dict) -> str:
     return data.get("conclusion") or "没有拿到统计数据。"
 
 
+_VERDICT_LABELS = {
+    "DRIFT": "确认漂移",
+    "UNKNOWN": "无法判定",
+    "STALE": "读数已失效",
+}
+
+
 def render_diagnose(data: dict) -> str:
     lines = [data.get("message") or "检查完成。"]
     for item in data.get("suspicious") or []:
+        verdict = item.get("verdict")
+        label = _VERDICT_LABELS.get(verdict, str(verdict))
+        fingerprint = item.get("fingerprint")
+        if fingerprint and fingerprint != "NONE":
+            label += f"（{fingerprint}）"
         lines.append(
-            f"· 活动 {item.get('eventId')}（商品 {item.get('productId')}）："
-            f"活动库存 {item.get('stockTotal')}，Redis 剩余 {item.get('redisStock')}，"
-            f"净消耗 {item.get('stockConsumed')}，订单数 {item.get('orderCount')}，"
-            f"仓库剩余 {item.get('dbStock')}。"
-            + "；".join(item.get("reasons") or [])
+            f"· 活动 {item.get('eventId')}（商品 {item.get('productId')}）：{label}"
         )
+        for reason in item.get("reasons") or []:
+            lines.append(f"  - {reason}")
     return "\n".join(lines)
 
 

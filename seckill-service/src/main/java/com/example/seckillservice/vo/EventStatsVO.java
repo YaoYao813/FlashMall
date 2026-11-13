@@ -36,6 +36,9 @@ public class EventStatsVO {
 
         private Integer paidCount;
 
+        /** status ∈ (4,5) 的订单数（已取消 / 已超时）。orderCount 包含它们，净消耗时要减掉 */
+        private Integer cancelledCount;
+
         /** paidCount × event.seckill_price，2 位小数 */
         private BigDecimal gmv;
 

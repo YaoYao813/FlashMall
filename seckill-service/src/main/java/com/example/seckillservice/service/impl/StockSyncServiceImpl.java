@@ -116,8 +116,18 @@ public class StockSyncServiceImpl implements StockSyncService {
             if (redisStock == null) {
                 throw new RuntimeException("库存同步失败，请稍后重试");
             }
-            log.info("秒杀活动预热完成：eventId={}, productId={}, stock={}",
-                    fresh.getId(), fresh.getProductId(), fresh.getStock());
+
+            // 记录仓库库存基线 D0：对账要拿「D0 - product_stock.stock」判定仓库侧净消耗。
+            // 预热成功后才写，失败时留 null，对账按 UNKNOWN 处理而不是按 0 误报。
+            try {
+                seckillEventMapper.updateWarehouseBaseline(fresh.getId(), available);
+            } catch (RuntimeException e) {
+                log.error("写仓库库存基线失败，该活动对账将返回 UNKNOWN：eventId={}, baseline={}",
+                        fresh.getId(), available, e);
+            }
+
+            log.info("秒杀活动预热完成：eventId={}, productId={}, stock={}, warehouseBaseline={}",
+                    fresh.getId(), fresh.getProductId(), fresh.getStock(), available);
             return StockSyncVO.builder()
                     .dbStock(fresh.getStock())
                     .redisStock(redisStock)
